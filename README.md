@@ -1,53 +1,72 @@
-# CatVodOpen和TvBox
+# TVSpider
 
-## 食用前阅读
-&ensp;&ensp;授人以鱼不如授人以渔，本仓意指在教会大家学会Spider，也欢迎大家提ISSUE，一起学习一起进步。<br>
-&ensp;&ensp;以下资源不能保证内容的合法性、准确性、完整性和有效性，请根据情况自行判断。 
-仅用于测试和学习研究，禁止用于商业用途，不得将其用于违反国家、地区、组织等的法律法规或相关规定的其他用途。
-使用任何第三方硬件、软件、所造成的一切后果由使用的个人或组织承担，与本文内容无关。
-所有直接或间接使用本内容的个人和组织，应 24 小时内完成学习和研究，并及时删除本文内容。
-所有基于本内容的源代码，进行的任何修改，为其他个人或组织的自发行为，与本内容没有任何直接或间接的关系，所造成的一切后果亦与本内容和本管理者无关。
-本管理者保留随时更改或补充此免责声明的权利。一旦使用、复制、转载、发布、修改了本文内容，则视为您已接受此免责声明。否则后果自负。
-本接口无公众号、无盈利、无引流、免费分享给小白使用，请勿轻信他人，谨防上当受骗。
+## 项目简介
 
-[使用教程见Wiki](https://github.com/jadehh/TVSpider/wiki)
+本项目是一个 TVBox / CatVodOpen 的爬虫源项目，用于抓取和提供视频资源接口。
 
-## TVBox互联网发布地址
-[TV发布地址](https://github.com/FongMi/Release/tree/main/apk/release)
-```bash
-https://gh.con.sh/https://raw.githubusercontent.com/jadehh/TVSpider/js/tv_config.json
+当前仅保留 **Jable** 爬虫源，后续可根据需求扩展其他源。
+
+## 项目结构
+
 ```
-> 配置信息见js分支分支
-
-
-## CatVodOpen
-[CatVodOpen发布地址](https://github.com/catvod/CatVodOpen/releases)
-
-> 注意使用Gitee或Github导入，并设置为私有仓库，<font color="red">CatVodOpen仅支持私有仓库</font>
-
-V1.1.3版本以上
-```bash
-gitee://Token@gitee.com/jadehh_743/TVSpider/dist/index.js.md5
+TVSpider/
+├── js/                     # 爬虫脚本目录
+│   ├── jable.js           # JableTV 爬虫
+│   └── spider.js          # 基础爬虫类
+├── lib/                    # 公共库
+├── nodejs/                 # Node.js 构建目录
+ Opinion
+│   ├── src/
+│   │   ├── index.js       # 入口文件
+│   │   ├── index.config.js # 配置文件
+│   │   └── spider/        # 爬虫实现
+│   └── dist/              # 构建输出目录
+├── build.py               # 配置文件生成脚本
+├── 18_tv_config.json      # TVBox 配置文件
+├── 18_open_config.json    # CatOpen 配置文件
+└── README.md
 ```
-<font color="red">**改动**</font>
 
-* quickjs改为nodejs，proxy设置修改
-* 在ios上无法使用local，使用db替换local所有方法
-* nodejs 的优势在于更加灵活
-> 配置信息见dist分支
+## 快速开始
 
-V1.1.2版本以下
+### 1. 生成配置文件
+
 ```bash
-gitee://Token@gitee.com/jadehh_743/TVSpider/js/open_config.json
+# 生成 TVBox 和 CatOpen 配置文件
+python build.py --key jable
 ```
-> 配置信息见js分支分支
 
+### 2. 构建 Node.js 产物
 
-## config文件生成
 ```bash
-python build.py --aliToken aliToken
+cd nodejs
+npm install
+npm run build
 ```
-> Token如果失效,需要重新获取阿里Token 
+
+构建完成后，产物位于 `nodejs/dist/` 目录：
+- `index.js` / `index.js.md5` — 猫源主入口
+- `index.config.js` / `index.config.js.md5` — 猫源配置
+
+## 使用方式
+
+### TVBox
+
+将生成的 `18_tv_config.json` 配置到 TVBox 中即可使用。
+
+### CatVodOpen
+
+使用 `nodejs/dist/index.js.md5` 作为猫源接口地址。
+
+## 开发说明
+
+- 爬虫脚本位于 `js/` 目录，需继承 `spider.js` 中的基础类
+- 新增爬虫后，运行 `build.py` 生成对应配置
+- 修改 `nodejs/src/` 下的源码后，执行 `npm run build` 重新构建
+
+## 免责声明
+
+本项目仅供学习研究使用，不得用于商业用途。使用本项目的任何第三方硬件、软件所造成的后果由使用者自行承担。 
 >
 > [阿里Token获取](https://alist.nn.ci/zh/guide/drivers/aliyundrive.html)
 >
