@@ -4,7 +4,7 @@
             {
                 "key": "jable",
                 "name": "🔞┃Jable┃🔞",
-                "api": ".//home/z/my-project/TVSpider/js/jable.js",
+                "api": "./js/jable.js",
                 "timeout": 30,
                 "ext": {
                     "box": "CatOpen"

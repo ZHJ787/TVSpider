@@ -174,7 +174,14 @@ class Build:
         baseObj["key"] = jsMoudle.js_name
         baseObj["name"] = jsMoudle.getName()
         baseObj["ext"] = {"box": tvType}
-        baseObj["api"] = "./" + jsMoudle.js_file.replace("\\", "/")
+        # 用相对路径 (相对配置文件所在目录), jsMoudle.js_file 可能是绝对路径或相对路径
+        # 统一转成 ./js/xxx.js 格式
+        rel = jsMoudle.js_file.replace("\\", "/")
+        if "/js/" in rel:
+            rel = "js/" + rel.split("/js/", 1)[1]
+        elif rel.startswith("js/"):
+            pass
+        baseObj["api"] = "./" + rel
         baseObj["type"] = jsMoudle.getType()
         return baseObj
 
