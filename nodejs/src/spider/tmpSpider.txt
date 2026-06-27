@@ -1,0 +1,134 @@
+/*
+* @File     : temp.js
+* @Author   : jade
+* @Date     : updateTime
+* @Email    : jadehh@1ive.com
+* @Software : Samples
+* @Desc     :
+*/
+import {NodeJSSpider} from "../spider.js";
+import {spider} from "../../../../js/temp.js";
+
+class tempSpider extends NodeJSSpider {
+    constructor() {
+        super();
+    }
+
+    getName() {
+        return spider.getName()
+    }
+
+    getAppName() {
+        return spider.getAppName()
+    }
+
+    getJSName() {
+        return spider.getJSName()
+    }
+
+    async init(inReq, _outResp) {
+        dataBase = inReq.server.db
+        if (this.getAppName().indexOf("阿里") > -1 || this.getAppName().indexOf("厂长") > -1 || this.getAppName() === "push_agent") {
+            await spider.initCloud(inReq.server.config)
+        }else if (this.getAppName() ===  "哔哩哔哩"){
+            await spider.initCookie(inReq.server.config["biliCookie"])
+        }
+        await spider.spiderInit(inReq)
+        spider.cfgObj["code"] = 0
+        spider.catOpenStatus = true
+        spider.classes.push({"type_name": "最近更新", "type_id": "最近更新"})
+        await super.init(inReq, _outResp)
+    }
+
+    async setClasses() {
+        await spider.setClasses()
+        this.classes = spider.classes
+    }
+
+    async setFilterObj() {
+        await spider.setFilterObj()
+        this.filterObj = spider.filterObj
+    }
+
+
+    async setHomeVod() {
+        await spider.setHomeVod()
+        this.homeVodList = spider.homeVodList
+    }
+
+    async setCategory(tid, pg, filter, extend) {
+        await spider.setCategory(tid, pg, filter, extend)
+        this.vodList = spider.vodList
+    }
+
+    async setDetail(id) {
+        await spider.setDetail(id)
+        this.vodDetail = spider.vodDetail
+    }
+
+    async setPlay(flag, id, flags) {
+        await spider.setPlay(flag, id, flags)
+        this.playUrl = spider.playUrl
+        this.result = spider.result
+    }
+
+    async setSearch(wd, quick,pg) {
+        await spider.setSearch(wd, quick,pg)
+        this.vodList = spider.vodList
+        this.result = spider.result
+
+    }
+
+    async setProxy(segments, headers) {
+        return await spider.proxy(segments, headers);
+    }
+
+}
+
+let baseSpider = new tempSpider()
+
+async function init(inReq, _outResp) {
+    return await baseSpider.init(inReq, _outResp)
+}
+
+async function home(inReq, _outResp) {
+    return await baseSpider.home(inReq, _outResp)
+}
+
+async function homeVod(inReq, _outResp) {
+    return await baseSpider.homeVod(inReq, _outResp)
+}
+
+async function category(inReq, _outResp) {
+    return await baseSpider.category(inReq, _outResp)
+}
+
+async function detail(inReq, _outResp) {
+    return await baseSpider.detail(inReq, _outResp)
+}
+
+async function play(inReq, _outResp) {
+    return await baseSpider.play(inReq, _outResp)
+}
+
+async function search(inReq, _outResp) {
+    return await baseSpider.search(inReq, _outResp)
+}
+async function proxy(inReq, outResp){
+    return await baseSpider.proxy(inReq,outResp)
+}
+export default {
+    meta: {
+        key: spider.getJSName(), name: spider.getName(), type: spider.getType(),
+    }, api: async (fastify) => {
+        fastify.post('/init', init);
+        fastify.post('/home', home);
+        fastify.post('/category', category);
+        fastify.post('/detail', detail);
+        fastify.post('/play', play);
+        fastify.post('/search', search);
+        fastify.get('/proxy/:what/:ids/:end', proxy);
+    }, spider: {
+        init: init, home: home, homeVod: homeVod, category: category, detail: detail, play: play, search: search
+    }
+};
