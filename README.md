@@ -1,42 +1,33 @@
 # TVSpider
 
-## 项目简介
-
-本项目是一个 TVBox / CatVodOpen 的爬虫源项目，用于抓取和提供视频资源接口。
-
-当前仅保留 **Jable** 爬虫源，后续可根据需求扩展其他源。
-
 ## 项目结构
 
 ```
 TVSpider/
-├── js/                     # 爬虫脚本目录
+├── js/                     # 爬虫脚本
 │   ├── jable.js           # JableTV 爬虫
 │   └── spider.js          # 基础爬虫类
 ├── lib/                    # 公共库
-├── nodejs/                 # Node.js 构建目录
- Opinion
+├── nodejs/
 │   ├── src/
 │   │   ├── index.js       # 入口文件
 │   │   ├── index.config.js # 配置文件
 │   │   └── spider/        # 爬虫实现
-│   └── dist/              # 构建输出目录
-├── build.py               # 配置文件生成脚本
-├── 18_tv_config.json      # TVBox 配置文件
-├── 18_open_config.json    # CatOpen 配置文件
-└── README.md
+│   └── dist/              # 构建产物
+├── build.py               # 配置生成脚本
+├── 18_tv_config.json      # TVBox 配置
+└── 18_open_config.json    # CatOpen 配置
 ```
 
-## 快速开始
+## 使用说明
 
-### 1. 生成配置文件
+### 生成配置
 
 ```bash
-# 生成 TVBox 和 CatOpen 配置文件
 python build.py --key jable
 ```
 
-### 2. 构建 Node.js 产物
+### 构建产物
 
 ```bash
 cd nodejs
@@ -44,29 +35,14 @@ npm install
 npm run build
 ```
 
-构建完成后，产物位于 `nodejs/dist/` 目录：
-- `index.js` / `index.js.md5` — 猫源主入口
-- `index.config.js` / `index.config.js.md5` — 猫源配置
+构建产物位于 `nodejs/dist/`：
+- `index.js` / `index.js.md5`
+- `index.config.js` / `index.config.js.md5`
 
-## 使用方式
+### 接入方式
 
-### TVBox
-
-将生成的 `18_tv_config.json` 配置到 TVBox 中即可使用。
-
-### CatVodOpen
-
-使用 `nodejs/dist/index.js.md5` 作为猫源接口地址。
-
-## 开发说明
-
-- 爬虫脚本位于 `js/` 目录，需继承 `spider.js` 中的基础类
-- 新增爬虫后，运行 `build.py` 生成对应配置
-- 修改 `nodejs/src/` 下的源码后，执行 `npm run build` 重新构建
-
-## 免责声明
-
-本项目仅供学习研究使用，不得用于商业用途。使用本项目的任何第三方硬件、软件所造成的后果由使用者自行承担。 
+- **TVBox**：使用 `18_tv_config.json`
+- **CatVodOpen**：使用 `nodejs/dist/index.js.md5` 
 >
 > [阿里Token获取](https://alist.nn.ci/zh/guide/drivers/aliyundrive.html)
 >
