@@ -10,6 +10,8 @@ esbuild.build({
     write: true,
     format: 'cjs',
     platform: 'node',
+    treeShaking: false,
+    footer: { js: 'if (typeof module !== "undefined" && globalThis.__catVodEntry) module.exports = globalThis.__catVodEntry;' },
     target: 'node18',
     plugins: [genMd5()],
 });

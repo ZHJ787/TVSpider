@@ -3,7 +3,7 @@
         {
             "key": "jable",
             "name": "🔞┃Jable┃🔞",
-            "api": "./js/jable.js",
+            "api": ".//home/z/my-project/TVSpider/js/jable.js",
             "timeout": 30,
             "ext": {
                 "box": "TVBox"

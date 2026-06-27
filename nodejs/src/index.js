@@ -88,3 +88,8 @@ export async function stop() {
     }
     server = null;
 }
+
+// === 自愈注入：通过 globalThis 显式暴露 start/stop，
+// 避免 esbuild tree-shake / minify 重命名后丢失导出。
+// 客户端 require('./index.js') 通过 footer 注入拿到 module.exports = { start, stop }。
+globalThis.__catVodEntry = { start, stop };
