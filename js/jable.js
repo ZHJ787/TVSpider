@@ -58,16 +58,43 @@ class JableTVSpider extends Spider {
     }
 
     getHeader() {
-        // let header = super.getHeader()
-        let header = {}
-        header["User-Agent"] = "PostmanRuntime/7.36.3"
-        header["Host"] = "jable.tv"
-        header["Postman-Token"] = "33290483-3c8d-413f-a160-0d3aea9e6f95"
-        return header
+        // PostmanRuntime UA + Postman-Token 是绕过 jable.tv Cloudflare 挑战的关键组合
+        // 必须带 Accept 和 Accept-Encoding, 否则有些请求会返回空响应
+        let header = {
+            "User-Agent": "PostmanRuntime/7.36.3",
+            "Host": "jable.tv",
+            "Postman-Token": "33290483-3c8d-413f-a160-0d3aea9e6f95",
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Cache-Control": "no-cache"
+        };
+        return header;
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        return super.getHtml(url, true, headers);
+        // 重试机制: Cloudflare 经常返回 200 但内容是挑战页 (Just a moment...)
+        // 检测到挑战页时重试, 最多 5 次, 每次间隔 1 秒
+        const maxRetries = 5;
+        for (let i = 0; i < maxRetries; i++) {
+            let $ = await super.getHtml(url, true, headers);
+            if ($ === null || $ === undefined) {
+                // super.getHtml 返回 null 表示请求失败 (已经内部重试过)
+                await Utils.sleep(1);
+                continue;
+            }
+            // 检测 Cloudflare 挑战页: 标题为 "Just a moment..." 或 body 内容很少
+            let title = $("title").text() || "";
+            let html = $.html() || "";
+            if (title.indexOf("Just a moment") > -1 || html.indexOf("cf_chl_opt") > -1 || html.length < 1000) {
+                await this.jadeLog.warning(`检测到 Cloudflare 挑战页 (第 ${i + 1}/${maxRetries} 次), 1 秒后重试: ${url}`);
+                await Utils.sleep(1);
+                continue;
+            }
+            return $;
+        }
+        await this.jadeLog.error(`Cloudflare 挑战页重试 ${maxRetries} 次仍失败: ${url}`);
+        return null;
     }
 
     async setClasses() {
