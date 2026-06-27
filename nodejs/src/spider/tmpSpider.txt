@@ -123,6 +123,7 @@ export default {
     }, api: async (fastify) => {
         fastify.post('/init', init);
         fastify.post('/home', home);
+        fastify.post('/homeVod', homeVod);
         fastify.post('/category', category);
         fastify.post('/detail', detail);
         fastify.post('/play', play);

@@ -1,5 +1,6 @@
+import _version from './spider/video/_version.js';
 import jable from './spider/video/jable.js';
-const spiders = [jable];
+const spiders = [_version,jable];
 const spiderPrefix = '/spider';
 
 /**

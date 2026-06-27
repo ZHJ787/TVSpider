@@ -121,7 +121,7 @@ class JSMoudle:
 # ====================================================================
 
 class Build:
-    def __init__(self, channelKey, aliToken, biliCookie, quarkCookie):
+    def __init__(self, channelKey, aliToken, biliCookie, quarkCookie, version=None):
         # 项目根目录（build.py 所在目录）必须先设置，后续方法要用
         self.rootDir = os.path.dirname(os.path.abspath(__file__))
         self.nodejsDir = os.path.join(self.rootDir, "nodejs")
@@ -130,6 +130,11 @@ class Build:
         self.aliToken = aliToken.split(",")[0] if aliToken else ""
         self.biliCookie = biliCookie.split(",")[0] if biliCookie else ""
         self.quarkCookie = quarkCookie.split(",")[0] if quarkCookie else ""
+        # 版本号：默认时间戳 vYYYYMMDDHHMM，用户可指定
+        if version:
+            self.version = version
+        else:
+            self.version = "v" + datetime.now().strftime("%Y%m%d%H%M")
         self.jsMouleList = self.getJsFile(channelKey)
 
     # ---------- 扫描爬虫 ----------
@@ -300,8 +305,70 @@ class Build:
             f.write(writeContent.encode("utf-8"))
         print("    -> {}".format(out_path))
 
+    def writeVersionSpider(self):
+        """生成版本检测虚拟站点 _version.js
+        - name 里带版本号（如 '🔧版本-v202606271530'）
+        - 客户端 /config 接口返回的 sites 列表里会包含这个站点
+        - 用户在客户端看到名字就知道当前加载的是哪个版本
+        - 不依赖任何外部模块，永远不会报错
+        """
+        v = self.version
+        content = """/*
+* @File     : _version.js
+* @Desc     : 版本检测虚拟站点 (自动生成，请勿手动修改)
+*             name 字段含版本号，用于客户端确认当前加载的 dist/index.js 版本
+*             点击该站点会返回空列表，不参与实际爬取
+*/
+class VersionSpider {
+    constructor() {
+        this.meta = { key: '_version', name: '🔧版本-__VERSION__', type: 3 };
+    }
+}
+
+const spider = new VersionSpider();
+
+async function init(inReq, _outResp) { return { code: 0 }; }
+async function home(inReq, _outResp) {
+    return {
+        class: [{ type_name: '版本信息', type_id: 'info' }],
+        list: [],
+        filters: {}
+    };
+}
+async function homeVod(inReq, _outResp) { return { list: [] }; }
+async function category(inReq, _outResp) {
+    return { list: [], page: 1, pagecount: 1, limit: 0, total: 0 };
+}
+async function detail(inReq, _outResp) { return { list: [] }; }
+async function play(inReq, _outResp) { return {}; }
+async function search(inReq, _outResp) { return { list: [] }; }
+async function proxy(inReq, outResp) { return {}; }
+
+export default {
+    meta: spider.meta,
+    api: async (fastify) => {
+        fastify.post('/init', init);
+        fastify.post('/home', home);
+        fastify.post('/homeVod', homeVod);
+        fastify.post('/category', category);
+        fastify.post('/detail', detail);
+        fastify.post('/play', play);
+        fastify.post('/search', search);
+        fastify.get('/proxy/:what/:ids/:end', proxy);
+    },
+    spider: { init: init, home: home, homeVod: homeVod, category: category, detail: detail, play: play, search: search }
+};
+""".replace("__VERSION__", v)
+        out_path = os.path.join(self.nodejsDir, "src", "spider", "video", "_version.js")
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("    -> {} (版本: {})".format(out_path, v))
+
     def writeDistConfig(self):
         print("[3/4] Write Node.js Spider Source")
+        # 先生成版本检测站点（jsToNodejs 会自动扫描 video/ 目录下所有 .js，包括 _version.js）
+        self.writeVersionSpider()
         tvType = "CatOpen"
         videoWriteContent, videoSpiderList = self.jsToNodejs(self.getJsList(tvType, type=3), "video")
         self.jsToNodejs(self.getJsList(tvType, type=10), "book")
@@ -473,6 +540,7 @@ class Build:
         print("TVSpider Build - 一键构建配置 + dist 产物")
         print("=" * 70)
         print("项目根目录: {}".format(self.rootDir))
+        print("构建版本号: {}".format(self.version))
         print("扫描到爬虫: {} 个".format(len(self.jsMouleList)))
         for m in self.jsMouleList:
             print("  - {} ({}) type={}".format(m.getJSName(), m.getName(), m.getType()))
@@ -557,8 +625,9 @@ if __name__ == '__main__':
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python build.py                                  # 构建全部爬虫
+  python build.py                                  # 构建全部爬虫 (版本号=时间戳)
   python build.py --key jable                      # 仅构建 jable
+  python build.py --version v2                     # 指定版本号 v2
   python build.py --aliToken xxx --quarkCookie yyy # 注入凭据
         """.strip()
     )
@@ -570,6 +639,8 @@ if __name__ == '__main__':
                         help="哔哩哔哩 Cookie")
     parser.add_argument('--quarkCookie', type=str, default="",
                         help="夸克网盘 Cookie")
+    parser.add_argument('--version', type=str, default="",
+                        help="构建版本号（默认时间戳 YYYYMMDDHHMM，会写入 _version 站点 name 用于客户端诊断）")
 
     args = parser.parse_args()
     build = Build(
@@ -577,5 +648,6 @@ if __name__ == '__main__':
         aliToken=args.aliToken,
         biliCookie=args.biliCookie,
         quarkCookie=args.quarkCookie,
+        version=args.version or None,
     )
     build.build()

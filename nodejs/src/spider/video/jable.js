@@ -1,7 +1,7 @@
 /*
 * @File     : jable.js
 * @Author   : jade
-* @Date     : 2026-06-27 14:26:59
+* @Date     : 2026-06-27 11:30:33
 * @Email    : jadehh@1ive.com
 * @Software : Samples
 * @Desc     :
@@ -123,6 +123,7 @@ export default {
     }, api: async (fastify) => {
         fastify.post('/init', init);
         fastify.post('/home', home);
+        fastify.post('/homeVod', homeVod);
         fastify.post('/category', category);
         fastify.post('/detail', detail);
         fastify.post('/play', play);
