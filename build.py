@@ -145,8 +145,8 @@ class Build:
         if not os.path.isdir(js_path):
             print("[WARN] js 目录不存在: {}".format(js_path))
             return jsMoudleList
-        # 跳过基类文件（Spider 父类），它们没有实际爬取逻辑
-        SKIP_FILES = {"spider.js"}
+        # 跳过基类文件（Spider 父类）和自动生成的版本检测站点
+        SKIP_FILES = {"spider.js", "_version.js"}
         SKIP_JS_NAMES = {"base"}
         for fileName in sorted(os.listdir(js_path)):
             if not fileName.endswith(".js"):
@@ -235,10 +235,66 @@ class Build:
             f.write(json.dumps(jsonConfig, indent=4, ensure_ascii=False).encode("utf-8"))
         print("    -> {}".format(out_path))
 
+    def writeVersionJsForTVBox(self):
+        """生成 TVBox QuickJS 兼容的 _version.js (放在 js/ 目录)
+        TVBox 用 QuickJS 引擎, 不支持 Node.js 风格代码, 需要独立的极简实现
+        只导出 __jsEvalReturn, 不依赖任何 import
+        """
+        v = self.version
+        content = """// TVBox 版本检测站点 (自动生成, 请勿手动修改)
+// name 含版本号, 用于确认 TVBox 加载了哪个版本的配置
+var version = '__VERSION__';
+function getName() { return '🔧版本-' + version; }
+function getAppName() { return 'Version'; }
+function getJSName() { return '_version'; }
+function getType() { return 3; }
+function init(cfg) {}
+function home(filter) {
+    return JSON.stringify({
+        class: [{ type_name: '版本信息', type_id: 'info' }],
+        list: [],
+        filters: {}
+    });
+}
+function homeVod() { return JSON.stringify({ list: [] }); }
+function category(tid, pg, filter, extend) {
+    return JSON.stringify({ page: 1, pagecount: 1, limit: 0, total: 0, list: [] });
+}
+function detail(id) { return JSON.stringify({ list: [] }); }
+function play(flag, id, flags) { return JSON.stringify({}); }
+function search(wd, quick) { return JSON.stringify({ list: [] }); }
+function __jsEvalReturn() {
+    return {
+        init: init, home: home, homeVod: homeVod, category: category,
+        detail: detail, play: play, search: search
+    };
+}
+""".replace("__VERSION__", v)
+        out_path = os.path.join(self.rootDir, "js", "_version.js")
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("    -> {} (TVBox 版本: {})".format(out_path, v))
+
+    def getVersionSiteForTVBox(self):
+        """生成 TVBox 配置里的 _version 站点条目 (引用 js/_version.js)"""
+        return {
+            "key": "_version",
+            "name": "🔧版本-{}".format(self.version),
+            "api": "./js/_version.js",
+            "timeout": 30,
+            "ext": {"box": "TVBox"},
+            "playerType": 0,
+            "type": 3
+        }
+
     def writeTVConfig(self):
         print("[1/4] Write TVBox Config")
+        self.writeVersionJsForTVBox()
         tvType = "TVBox"
         videoConfig, bookConfig, carToonConfig, jsonConfig = self.getConfigByTvType(tvType)
+        # 在站点列表最前面加 _version 测试站点
+        videoConfig.insert(0, self.getVersionSiteForTVBox())
         jsonConfig["sites"] = videoConfig
         self.writeJsonConfig("tv", jsonConfig)
 

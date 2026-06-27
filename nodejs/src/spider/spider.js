@@ -121,16 +121,20 @@ class NodeJSSpider extends Spider {
         this.page = parseInt(pg)
         await this.jadeLog.info(`正在解析分类页面,tid = ${tid},pg = ${pg},extend = ${JSON.stringify(extend)}`)
         if (tid === "最近更新") {
-            // 首页推荐: 调 setHomeVod 拿数据, 但必须返回完整的分页结构
-            // 否则客户端收到 {page:0, list:[...]} 时 page=0 是非法值会判定无数据
+            // 首页推荐: 调 setHomeVod 拿数据, 必须返回完整的分页结构
+            // category(list, page, count=pagecount, limit, total)
+            // - page=1 当前第1页
+            // - count=1 总共1页 (不要写成视频数, 否则客户端会尝试翻 N 页但每页都返回同样数据, 判定为异常)
+            // - limit=N 每页N条
+            // - total=N 总共N条
             try {
                 this.vodList = []
                 await this.setHomeVod()
-                // 返回标准 category 结构: page/pagecount/limit/total/list
-                return this.result.category(this.homeVodList, 1, this.homeVodList.length, this.homeVodList.length, this.homeVodList.length)
+                const n = this.homeVodList.length
+                return this.result.category(this.homeVodList, 1, 1, n, n)
             } catch (e) {
                 await this.jadeLog.error(`首页推荐解析失败,失败原因为:${e}`)
-                return this.result.category([], 1, 0, 0, 0)
+                return this.result.category([], 1, 1, 0, 0)
             }
         } else {
             try {

@@ -1,6 +1,17 @@
 {
     "sites": [
         {
+            "key": "_version",
+            "name": "🔧版本-v4",
+            "api": "./js/_version.js",
+            "timeout": 30,
+            "ext": {
+                "box": "TVBox"
+            },
+            "playerType": 0,
+            "type": 3
+        },
+        {
             "key": "jable",
             "name": "🔞┃Jable┃🔞",
             "api": "./js/jable.js",
