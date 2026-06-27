@@ -94,11 +94,20 @@ class NodeJSSpider extends Spider {
 
     async home(inReq, _outResp) {
         this.vodList = []
-        await this.jadeLog.info("正在解析首页类别", true)
+        await this.jadeLog.info("正在解析首页", true)
         await this.setHome()
-        await this.jadeLog.debug(`首页类别内容为:${this.result.home(this.classes, [], this.filterObj)}`)
-        await this.jadeLog.info("首页类别解析完成", true)
-        return this.result.home(this.classes, [], this.filterObj)
+        // 关键修复: home 接口必须同时返回首页推荐视频 (list 字段)
+        // 否则客户端首页空白 (CatVodOpen 系客户端调 /home 拿分类+视频,
+        // 不会主动调 /homeVod 或 /category)
+        try {
+            await this.setHomeVod()
+        } catch (e) {
+            await this.jadeLog.error(`首页推荐视频获取失败:${e}`)
+            this.homeVodList = []
+        }
+        await this.jadeLog.debug(`首页内容为:${this.result.home(this.classes, this.homeVodList, this.filterObj)}`)
+        await this.jadeLog.info("首页解析完成", true)
+        return this.result.home(this.classes, this.homeVodList, this.filterObj)
     }
 
     async homeVod() {
