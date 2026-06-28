@@ -83,7 +83,7 @@ class JableTVSpider extends Spider {
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._tlsGet(url, headers);
-                    this._diag.push(`try${i+1}:size=${html ? html.length : 0}`);
+                    this._diag.push(`try${i+1}:size=${html ? html.length : 0}:${html ? html.slice(0, 80).replace(/\r/g, '').replace(/\n/g, ' ') : ''}`);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
                         this._diag.push('OK');
                         return load(html);
