@@ -76,25 +76,22 @@ class JableTVSpider extends Spider {
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
         // Node.js 环境: 用静态 import 的 https 模块 + 重试
         if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
-            const maxRetries = 5;
+            const maxRetries = 3;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._nodeHttpsGet(url, headers);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
                         return load(html);
                     }
-                    await this.jadeLog.warning(`请求失败或挑战页 (第 ${i + 1}/${maxRetries} 次), 重试: ${url}`);
                     await Utils.sleep(1);
                 } catch (e) {
-                    await this.jadeLog.warning(`请求异常 (第 ${i + 1}/${maxRetries} 次): ${e.message}`);
                     await Utils.sleep(1);
                 }
             }
-            await this.jadeLog.error(`Node.js 请求 ${maxRetries} 次仍失败, 降级到 super.getHtml: ${url}`);
         }
 
         // TVBox 环境或降级: 用 cat.js 的 req 函数
-        const maxRetries = 5;
+        const maxRetries = 3;
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
@@ -109,11 +106,11 @@ class JableTVSpider extends Spider {
             }
             return $;
         }
-        await this.jadeLog.error(`getHtml 重试 ${maxRetries} 次仍失败: ${url}`);
         return null;
     }
 
     // Node.js 原生 https GET, 用静态 import 的 https/zlib 模块
+    // 单次超时 8 秒 (降低, 避免 PeekPlayer 整体超时)
     async _nodeHttpsGet(url, headers) {
         return new Promise((resolve, reject) => {
             const req = https.request(url, {
@@ -136,7 +133,7 @@ class JableTVSpider extends Spider {
                 });
             });
             req.on('error', reject);
-            req.setTimeout(15000, () => {
+            req.setTimeout(8000, () => {
                 req.destroy(new Error('timeout'));
             });
             req.end();
