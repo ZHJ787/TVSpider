@@ -75,22 +75,29 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
+        this._diag = [];
         // Node.js 环境: 用 tls.connect + 手动 HTTP 请求 (绕过 Cloudflare)
-        // 关键: https.request 会被 Cloudflare 拦截, 但 tls.connect 不会!
-        // 原因: https.request 内部加了 TLS 扩展导致指纹变化, tls.connect 用最简 TLS 握手
         if (typeof tls !== 'undefined' && tls && typeof tls.connect === 'function') {
+            this._diag.push('tls=Y');
             const maxRetries = 3;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._tlsGet(url, headers);
+                    this._diag.push(`try${i+1}:size=${html ? html.length : 0}`);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
+                        this._diag.push('OK');
                         return load(html);
                     }
+                    this._diag.push(`try${i+1}:挑战页或空`);
                     await Utils.sleep(1);
                 } catch (e) {
+                    this._diag.push(`try${i+1}:ERR:${e.message}`);
                     await Utils.sleep(1);
                 }
             }
+            this._diag.push('tls失败,降级super');
+        } else {
+            this._diag.push('tls=N');
         }
 
         // TVBox 环境或降级: 用 cat.js 的 req 函数
@@ -98,17 +105,21 @@ class JableTVSpider extends Spider {
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
+                this._diag.push(`super${i+1}:null`);
                 await Utils.sleep(1);
                 continue;
             }
             let title = $("title").text() || "";
             let html = $.html() || "";
             if (title.indexOf("Just a moment") > -1 || html.indexOf("cf_chl_opt") > -1 || html.length < 1000) {
+                this._diag.push(`super${i+1}:挑战页`);
                 await Utils.sleep(1);
                 continue;
             }
+            this._diag.push(`super${i+1}:OK`);
             return $;
         }
+        this._diag.push('全失败');
         return null;
     }
 
@@ -312,7 +323,26 @@ class JableTVSpider extends Spider {
 
     async setHomeVod() {
         let $ = await this.getHtml(this.siteUrl)
-        this.homeVodList = await this.parseVodShortListFromDoc($)
+        if ($ === null || $ === undefined) {
+            // getHtml 失败, 返回一个诊断视频
+            this.homeVodList = [{
+                vod_id: "diag",
+                vod_name: "❌getHtml失败,看诊断",
+                vod_pic: "",
+                vod_remarks: this._diag || "no-diag"
+            }]
+            return
+        }
+        try {
+            this.homeVodList = await this.parseVodShortListFromDoc($)
+        } catch (e) {
+            this.homeVodList = [{
+                vod_id: "diag",
+                vod_name: "❌parseVod失败:" + e.message,
+                vod_pic: "",
+                vod_remarks: ""
+            }]
+        }
     }
 
     async setDetail(id) {
