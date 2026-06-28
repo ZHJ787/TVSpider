@@ -16,6 +16,43 @@ class JableTVSpider extends Spider {
         super();
         this.siteUrl = "https://jable.tv"
         this.cookie = ""
+        this._diag = []
+        // 启动时立即测试环境
+        this._testEnv()
+    }
+
+    _testEnv() {
+        // 测试 1: globalThis.require 是否存在
+        if (typeof globalThis.require === 'function') {
+            this._diag.push('require=Y')
+        } else {
+            this._diag.push('require=N')
+        }
+        // 测试 2: process 是否存在
+        if (typeof process !== 'undefined') {
+            this._diag.push('platform=' + process.platform + '/' + process.arch)
+            this._diag.push('node=' + process.version)
+        } else {
+            this._diag.push('no-process')
+        }
+        // 测试 3: https 模块能否加载
+        try {
+            if (typeof globalThis.require === 'function') {
+                const https = globalThis.require('https')
+                this._diag.push('https=Y')
+            }
+        } catch(e) {
+            this._diag.push('https=ERR:' + e.message.slice(0, 30))
+        }
+        // 测试 4: zlib 模块
+        try {
+            if (typeof globalThis.require === 'function') {
+                globalThis.require('zlib')
+                this._diag.push('zlib=Y')
+            }
+        } catch(e) {
+            this._diag.push('zlib=ERR')
+        }
     }
 
     async spiderInit(inReq = null) {
@@ -44,7 +81,10 @@ class JableTVSpider extends Spider {
     }
 
     getName() {
-        return "🔞┃Jable┃🔞"
+        // 诊断模式: 把环境信息放到站点名里
+        // 站点名最长约 20 字符, 用 | 分隔关键信息
+        const diag = this._diag.slice(0, 4).join(',')
+        return "🔞Jable|" + diag
     }
 
     getJSName() {
