@@ -1,6 +1,6 @@
 // TVBox 版本检测站点 (自动生成, 请勿手动修改)
 // name 含版本号, 用于确认 TVBox 加载了哪个版本的配置
-var version = 'v20';
+var version = 'v21';
 function getName() { return '🔧版本-' + version; }
 function getAppName() { return 'Version'; }
 function getJSName() { return '_version'; }
