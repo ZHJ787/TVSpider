@@ -4,12 +4,16 @@
 * @Date     : 2024/3/4 9:44
 * @Email    : jadehh@1ive.com
 * @Software : Samples
-* @Desc     : 纯 Node.js 绕过 Cloudflare (TLS 1.2 + PostmanRuntime UA + 重试)
+* @Desc     : 纯 Node.js 绕过 Cloudflare (静态 import https 模块)
 */
 import {_, load} from '../lib/cat.js';
 import {VodDetail, VodShort} from "../lib/vod.js"
 import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
+// 静态 import Node.js 内置模块 (esbuild 会转成 require, 在 iPhone Node.js 也能用)
+// 不能用 globalThis.require, 因为 iPhone Mira Play 环境里 globalThis.require 不存在
+import https from 'https';
+import zlib from 'zlib';
 
 class JableTVSpider extends Spider {
     constructor() {
@@ -22,11 +26,11 @@ class JableTVSpider extends Spider {
     }
 
     _testEnv() {
-        // 测试 1: globalThis.require 是否存在
-        if (typeof globalThis.require === 'function') {
-            this._diag.push('require=Y')
+        // 测试 1: 静态 import 的 https 是否可用
+        if (typeof https !== 'undefined' && https) {
+            this._diag.push('https=Y')
         } else {
-            this._diag.push('require=N')
+            this._diag.push('https=N')
         }
         // 测试 2: process 是否存在
         if (typeof process !== 'undefined') {
@@ -35,23 +39,11 @@ class JableTVSpider extends Spider {
         } else {
             this._diag.push('no-process')
         }
-        // 测试 3: https 模块能否加载
-        try {
-            if (typeof globalThis.require === 'function') {
-                const https = globalThis.require('https')
-                this._diag.push('https=Y')
-            }
-        } catch(e) {
-            this._diag.push('https=ERR:' + e.message.slice(0, 30))
-        }
-        // 测试 4: zlib 模块
-        try {
-            if (typeof globalThis.require === 'function') {
-                globalThis.require('zlib')
-                this._diag.push('zlib=Y')
-            }
-        } catch(e) {
-            this._diag.push('zlib=ERR')
+        // 测试 3: zlib 是否可用
+        if (typeof zlib !== 'undefined' && zlib) {
+            this._diag.push('zlib=Y')
+        } else {
+            this._diag.push('zlib=N')
         }
     }
 
@@ -113,18 +105,19 @@ class JableTVSpider extends Spider {
         // 诊断信息收集
         this._diag = this._diag || [];
         
-        // Node.js 环境: 用原生 https
-        if (typeof globalThis.require === 'function') {
-            this._diag.push(`[env] globalThis.require=function, platform=${typeof process !== 'undefined' ? process.platform + '/' + process.arch : 'unknown'}`);
+        // Node.js 环境: 用静态 import 的 https 模块
+        // 注意: 不能用 globalThis.require, iPhone Mira Play 环境里不存在
+        // 静态 import https 会被 esbuild 转成顶部 require("https"), 在 iPhone 也能用
+        if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
+            this._diag.push(`[env] https=Y (static import)`);
             const maxRetries = 5;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._nodeHttpsGet(url, headers);
-                    this._diag.push(`[try ${i+1}] _nodeHttpsGet 返回 size=${html ? html.length : 0}`);
+                    this._diag.push(`[try ${i+1}] size=${html ? html.length : 0}`);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
-                        this._diag.push(`[try ${i+1}] 解析成功, 调用 load()`);
                         let $ = load(html);
-                        this._diag.push(`[try ${i+1}] load() 完成, typeof $=${typeof $}`);
+                        this._diag.push(`[try ${i+1}] load() OK, typeof $=${typeof $}`);
                         return $;
                     }
                     this._diag.push(`[try ${i+1}] 挑战页或空, 重试`);
@@ -136,15 +129,15 @@ class JableTVSpider extends Spider {
             }
             this._diag.push(`[fallback] Node.js 失败, 降级到 super.getHtml`);
         } else {
-            this._diag.push(`[env] globalThis.require 不存在 (typeof=${typeof globalThis.require})`);
+            this._diag.push(`[env] https=N (typeof=${typeof https})`);
         }
 
-        // TVBox 环境或降级: 用 cat.js 的 req 函数 + 挑战页检测重试
+        // TVBox 环境或降级: 用 cat.js 的 req 函数
         const maxRetries = 5;
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
-                this._diag.push(`[super ${i+1}] 返回 null`);
+                this._diag.push(`[super ${i+1}] null`);
                 await Utils.sleep(1);
                 continue;
             }
@@ -155,22 +148,16 @@ class JableTVSpider extends Spider {
                 await Utils.sleep(1);
                 continue;
             }
-            this._diag.push(`[super ${i+1}] 成功`);
+            this._diag.push(`[super ${i+1}] OK`);
             return $;
         }
         await this.jadeLog.error(`getHtml 重试 ${maxRetries} 次仍失败: ${url}`);
-        // 把诊断信息存到 classes, 客户端 home 接口能看到
-        this.classes = [{ type_name: "诊断信息", type_id: "diag" }];
-        this._diag.forEach(d => this.classes.push({ type_name: d, type_id: "diag" }));
         return null;
     }
 
-    // Node.js 原生 https GET, 不设任何 TLS 选项 (默认 TLS + PostmanRuntime UA = 100% 成功)
-    // 注意: 不要设 ciphers/minVersion/maxVersion, 否则 iOS Node.js 可能不支持或首次被 Cloudflare 拦截
+    // Node.js 原生 https GET, 用静态 import 的 https/zlib 模块
     async _nodeHttpsGet(url, headers) {
         return new Promise((resolve, reject) => {
-            const https = globalThis.require('https');
-            const zlib = globalThis.require('zlib');
             const req = https.request(url, {
                 method: 'GET',
                 headers: headers || {}
