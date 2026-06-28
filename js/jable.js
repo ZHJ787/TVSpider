@@ -111,19 +111,15 @@ class JableTVSpider extends Spider {
         return null;
     }
 
-    // Node.js 原生 https GET, TLS 1.2 ECDHE ciphers 绕过 Cloudflare
+    // Node.js 原生 https GET, 不设任何 TLS 选项 (默认 TLS + PostmanRuntime UA = 100% 成功)
+    // 注意: 不要设 ciphers/minVersion/maxVersion, 否则 iOS Node.js 可能不支持或首次被 Cloudflare 拦截
     async _nodeHttpsGet(url, headers) {
         return new Promise((resolve, reject) => {
             const https = globalThis.require('https');
             const zlib = globalThis.require('zlib');
             const req = https.request(url, {
                 method: 'GET',
-                headers: headers || {},
-                // 关键: TLS 1.2 + ECDHE ciphers, 模拟 Postman 的 TLS 指纹
-                ALPNProtocols: ['http/1.1'],
-                ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305',
-                minVersion: 'TLSv1.2',
-                maxVersion: 'TLSv1.2'
+                headers: headers || {}
             }, (res) => {
                 const chunks = [];
                 res.on('data', c => chunks.push(c));
