@@ -1,25 +1,20 @@
 /*
 * @File     : jable.js
 * @Author   : jade / ZHJ787
-* @Date     : 2024/3/4 9:44
-* @Email    : jadehh@1ive.com
-* @Software : Samples
-* @Desc     : 用 http2 绕过 Cloudflare (https.request/tls.connect 被拦, http2.connect 不会)
+* @Desc     : 用 got-scraping 绕过 Cloudflare (模拟浏览器 TLS 指纹)
 */
 import {_, load} from '../lib/cat.js';
 import {VodDetail, VodShort} from "../lib/vod.js"
 import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
-// 静态 import Node.js 内置模块 (esbuild 转成 require, iPhone 也能用)
-import https from 'https';
+
 
 class JableTVSpider extends Spider {
     constructor() {
         super();
-        this.siteUrl = "https://jable.tv"
+        this.siteUrl = "https://fs1.app"
         this.cookie = ""
-        // 防止 esbuild tree-shake 消除 getHtml
-        this.__getHtmlRef = this.getHtml
+
     }
 
     async spiderInit(inReq = null) {
@@ -32,7 +27,8 @@ class JableTVSpider extends Spider {
 
     getImgHeaders(){
         return {
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": "PostmanRuntime/7.37.3",
+            "Postman-Token": "c2602692-1a05-4bb0-93cd-270afad97e87",
             "Host": "assets-cdn.jable.tv",
             "Proxy": true
         }
@@ -60,151 +56,133 @@ class JableTVSpider extends Spider {
     }
 
     getHeader() {
-        // PostmanRuntime UA + Postman-Token 是绕过 Cloudflare 的关键组合
-        // 配合 TLS 1.2 ECDHE ciphers, 90% 成功率, 加重试后 100%
-        return {
+        // PostmanRuntime UA + Postman-Token 是绕过 jable.tv Cloudflare 挑战的关键组合
+        // 必须带 Accept 和 Accept-Encoding, 否则有些请求会返回空响应
+        let header = {
             "User-Agent": "PostmanRuntime/7.36.3",
-            "Host": "jable.tv",
+            "Host": "fs1.app",
             "Postman-Token": "33290483-3c8d-413f-a160-0d3aea9e6f95",
             "Accept": "*/*",
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": "gzip, deflate, br",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Cache-Control": "no-cache"
         };
+        return header;
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        this._diag = [];
-        // Node.js 环境: 用 http2.connect (绕过 Cloudflare)
-        if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
-            this._diag.push('https=Y');
-            const maxRetries = 1;
-            for (let i = 0; i < maxRetries; i++) {
-                try {
-                    let html = await this._httpsGet(url, headers);
-                    this._diag.push(`try${i+1}:size=${html ? html.length : 0}`);
-                    if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
-                        this._diag.push('OK');
-                        return load(html);
-                    }
-                    this._diag.push(`try${i+1}:挑战页或空`);
-                    await Utils.sleep(1);
-                } catch (e) {
-                    this._diag.push(`try${i+1}:ERR:${e.message}`);
-                    await Utils.sleep(1);
-                }
-            }
-            this._diag.push('https失败,降级super');
-        } else {
-            this._diag.push('h2=N');
-        }
-
-        // TVBox 环境或降级: 用 cat.js 的 req 函数
+        // fs1.app 是 jable.tv 镜像, Cloudflare 只检查 UA, 不检查 TLS 指纹
+        // 用 cat.js req + PostmanRuntime UA 就能绕过
         const maxRetries = 3;
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
-                this._diag.push(`super${i+1}:null`);
                 await Utils.sleep(1);
                 continue;
             }
-            let title = $("title").text() || "";
-            let html = $.html() || "";
-            if (title.indexOf("Just a moment") > -1 || html.indexOf("cf_chl_opt") > -1 || html.length < 1000) {
-                this._diag.push(`super${i+1}:挑战页`);
-                await Utils.sleep(1);
-                continue;
-            }
-            this._diag.push(`super${i+1}:OK`);
             return $;
         }
-        this._diag.push('全失败');
         return null;
     }
 
-    // 用 https.request + Accept-Encoding: identity 绕过 Cloudflare
-    // 关键: 不请求压缩数据 (gzip/br), Cloudflare 对压缩请求拦截更严
-    // 实测: Accept-Encoding: identity = 10/10 成功
-    async _httpsGet(url, headers) {
-        return new Promise((resolve, reject) => {
-            // 强制 Accept-Encoding: identity
-            const reqHeaders = {...(headers || {}), 'Accept-Encoding': 'identity'};
-            const req = https.request(url, {
-                method: 'GET',
-                headers: reqHeaders
-            }, (res) => {
-                let data = '';
-                res.setEncoding('utf8');
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => resolve(data));
-            });
-            req.on('error', reject);
-            req.setTimeout(15000, () => {
-                req.destroy(new Error('timeout'));
-            });
-            req.end();
-        });
+    async setClasses() {
+        let $ = await this.getHtml(this.siteUrl)
+        let navElements = $("[class=\"title-box\"]")
+        let defaultTypeIdElements = $("div.row")
+        for (const navElement of $(defaultTypeIdElements[0]).find("a")) {
+            let type_name = $(navElement).text()
+            let type_id = navElement.attribs.href
+            if (type_id.indexOf(this.siteUrl) > -1) {
+                this.classes.push(this.getTypeDic(type_name, type_id))
+            }
+        }
+        navElements = navElements.slice(1, 9)
+        defaultTypeIdElements = defaultTypeIdElements.slice(1, 9)
+        for (let i = 0; i < navElements.length; i++) {
+            let typeId = $(defaultTypeIdElements[i]).find("a")[0].attribs["href"]
+            this.classes.push(this.getTypeDic("标签", typeId));
+            break
+        }
     }
 
-    // 硬编码分类 (参考 omnibox py 脚本, 不爬 jable.tv, 避免客户端超时)
-    // type_id 用完整 URL, category 接口直接用这个 URL 拼异步 API
-    static CATEGORIES = [
-        { type_id: "https://jable.tv/categories/bdsm/", type_name: "📚 主奴調教" },
-        { type_id: "https://jable.tv/categories/sex-only/", type_name: "🔞 直接開啪" },
-        { type_id: "https://jable.tv/categories/chinese-subtitle/", type_name: "📝 中文字幕" },
-        { type_id: "https://jable.tv/categories/insult/", type_name: "😤 凌辱快感" },
-        { type_id: "https://jable.tv/categories/uniform/", type_name: "👔 制服誘惑" },
-        { type_id: "https://jable.tv/categories/roleplay/", type_name: "🎭 角色劇情" },
-        { type_id: "https://jable.tv/categories/private-cam/", type_name: "📷 盜攝偷拍" },
-        { type_id: "https://jable.tv/categories/uncensored/", type_name: "🔓 無碼解放" },
-        { type_id: "https://jable.tv/categories/pov/", type_name: "👁 男友視角" },
-        { type_id: "https://jable.tv/categories/groupsex/", type_name: "👥 多P群交" },
-        { type_id: "https://jable.tv/categories/pantyhose/", type_name: "👠 絲襪美腿" },
-        { type_id: "https://jable.tv/categories/lesbian/", type_name: "👩‍❤️‍👩 女同歡愉" },
-        { type_id: "https://jable.tv/latest-updates/", type_name: "💡 新片優先" },
-        { type_id: "https://jable.tv/hot/", type_name: "🔥 熱度優先" },
-    ];
-
-    // 硬编码排序选项
-    static SORT_OPTIONS = [
-        { n: "近期最佳", v: "post_date_and_popularity" },
-        { n: "最近更新", v: "post_date" },
-        { n: "最多觀看", v: "video_viewed" },
-        { n: "最高收藏", v: "most_favourited" },
-    ];
-
-    async setClasses() {
-        // 直接用硬编码分类, 不爬 jable.tv (避免客户端超时)
-        this.classes = [];
-        // 添加"最近更新"虚拟分类
-        this.classes.push(this.getTypeDic("最近更新", "最近更新"));
-        // 添加硬编码分类
-        for (const cat of JableTVSpider.CATEGORIES) {
-            this.classes.push(this.getTypeDic(cat.type_name, cat.type_id));
+    async getSortFilter($) {
+        let sortElements = $("[class=\"sorting-nav\"]").find("a")
+        let extend_dic = {"name": "排序", "key": "sort", "value": []}
+        for (const sortElement of sortElements) {
+            let typeId = sortElement.attribs["data-parameters"].split("sort_by:")[1]
+            let typeName = $(sortElement).text()
+            extend_dic["value"].push({"n": typeName, "v": typeId})
         }
+        return extend_dic
+    }
+
+    async getFilter($, index, type_id, type_name) {
+        let extend_list = []
+        if (index < 4) {
+            let extend_dic = {"name": type_name, "key": "type", "value": []}
+            let type_seletc_list = ["div.img-box > a", "[class=\"horizontal-img-box ml-3 mb-3\"] > a", "", "sort"]
+            let type_id_select_list = ["div.absolute-center > h4", "div.detail"]
+            let default$ = await this.getHtml(type_id)
+            for (const element of default$(type_seletc_list[index])) {
+                let typeId = element.attribs["href"]
+                let typeName = $($(element).find(type_id_select_list[index])).text().replaceAll("\t", "").replaceAll("\n", '').replaceAll(" ", "");
+                extend_dic["value"].push({"n": typeName, "v": typeId})
+            }
+            if (extend_dic.value.length > 0) {
+                extend_list.push(extend_dic)
+                //排序
+                let sortDetail$ = await this.getHtml(extend_dic["value"][0]["v"])
+                let sort_extend_dic = await this.getSortFilter(sortDetail$)
+                if (sort_extend_dic.value.length > 0) {
+                    extend_list.push(sort_extend_dic)
+                }
+            } else {
+                //排序
+                let sort_extend_dic = await this.getSortFilter(default$)
+                if (sort_extend_dic.value.length > 0) {
+                    extend_list.push(sort_extend_dic)
+                }
+            }
+
+        } else {
+            let defaultTypeIdElements = $("div.row").slice(1, 9)
+            let navElements = $("[class=\"title-box\"]").slice(1, 9)
+            for (let i = 0; i < navElements.length; i++) {
+                let extend_dic = {"name": $($(navElements[i]).find("h2")).text(), "key": "type", "value": []}
+                for (const filterElement of $(defaultTypeIdElements[i]).find("a")) {
+                    let filter_type_id = filterElement.attribs.href
+                    if (filter_type_id.indexOf(this.siteUrl) > -1) {
+                        extend_dic["value"].push({"n": $(filterElement).text(), "v": filter_type_id})
+                    }
+                }
+                extend_list.push(extend_dic)
+            }
+
+            let sortDetail$ = await this.getHtml(type_id)
+            let sort_extend_dic = await this.getSortFilter(sortDetail$)
+            if (sort_extend_dic.value.length > 0) {
+                extend_list.push(sort_extend_dic)
+            }
+        }
+        return extend_list
     }
 
     async setFilterObj() {
-        // 用硬编码排序选项, 不爬 jable.tv
-        this.filterObj = {};
-        for (const cat of JableTVSpider.CATEGORIES) {
-            this.filterObj[cat.type_id] = [{
-                name: "排序",
-                key: "sort",
-                value: JableTVSpider.SORT_OPTIONS
-            }];
+        let $ = await this.getHtml(this.siteUrl)
+        let classes = this.classes.slice(1)
+        for (let i = 0; i < classes.length; i++) {
+            let type_name = classes[i].type_name
+            let type_id = classes[i].type_id
+            // if (type_id.indexOf("models") > 1) {
+            //     type_id = `https://jable.tv/models/?mode=async&function=get_block&block_id=list_models_models_list&sort_by=total_videos&_=${new Date().getTime()}`
+            // }
+            let extend_list = await this.getFilter($, i, type_id, type_name)
+            if (extend_list.length > 1 && i < 4) {
+                type_id = extend_list[0]["value"][0]["v"]
+                this.classes[i + 1] = this.getTypeDic(type_name, type_id)
+            }
+            this.filterObj[type_id] = extend_list
         }
-        // hot 分类用不同的排序
-        this.filterObj["https://jable.tv/hot/"] = [{
-            name: "排序",
-            key: "sort",
-            value: [
-                { n: "所有時間", v: "video_viewed" },
-                { n: "本月熱門", v: "video_viewed_month" },
-                { n: "本週熱門", v: "video_viewed_week" },
-                { n: "今日熱門", v: "video_viewed_today" },
-            ]
-        }];
     }
 
     async parseVodShortListFromDoc($) {
@@ -215,6 +193,11 @@ class JableTVSpider extends Spider {
             let vod_pic = $(element).find("img").attr("data-src")
             if (vod_pic !== undefined) {
                 vodShort.vod_pic = vod_pic
+                // if (this.catOpenStatus) {
+                //     vodShort.vod_pic = this.jsBase + Utils.base64Encode(vod_pic)
+                // } else {
+                //     vodShort.vod_pic = vod_pic
+                // }
                 let url = $(element).find("a").attr("href");
                 vodShort.vod_id = url.split("/")[4];
                 vodShort.vod_name = url.split("/")[4];
@@ -228,6 +211,7 @@ class JableTVSpider extends Spider {
                     vod_list.push(vodShort);
                 }
             }
+
         }
         return vod_list
     }
@@ -238,6 +222,11 @@ class JableTVSpider extends Spider {
         vodDetail.vod_name = $($(leftElement).find("h4")).text();
         let vod_pic = Utils.getStrByRegex(/<video poster="(.*?)" id=/, $.html())
         vodDetail.vod_pic = vod_pic
+        // if (this.catOpenStatus) {
+        //     vodDetail.vod_pic = this.jsBase + Utils.base64Encode(vod_pic)
+        // } else {
+        //     vodDetail.vod_pic = vod_pic
+        // }
         vodDetail.vod_year = $($("[class=\"inactive-color\"]")).text()
         let episodeName = $($("[class=\"header-right d-none d-md-block\"] > h6")).text().replaceAll("\n", "").replaceAll("●", "")
         let vodItems = []
@@ -253,26 +242,7 @@ class JableTVSpider extends Spider {
 
     async setHomeVod() {
         let $ = await this.getHtml(this.siteUrl)
-        if ($ === null || $ === undefined) {
-            // getHtml 失败, 返回一个诊断视频
-            this.homeVodList = [{
-                vod_id: "diag",
-                vod_name: "❌getHtml失败,看诊断",
-                vod_pic: "",
-                vod_remarks: this._diag || "no-diag"
-            }]
-            return
-        }
-        try {
-            this.homeVodList = await this.parseVodShortListFromDoc($)
-        } catch (e) {
-            this.homeVodList = [{
-                vod_id: "diag",
-                vod_name: "❌parseVod失败:" + e.message,
-                vod_pic: "",
-                vod_remarks: ""
-            }]
-        }
+        this.homeVodList = await this.parseVodShortListFromDoc($)
     }
 
     async setDetail(id) {
@@ -290,7 +260,7 @@ class JableTVSpider extends Spider {
         if (tid.indexOf("latest-updates") > 1) {
             cateUrl = `https://jable.tv/latest-updates/?mode=async&function=get_block&block_id=list_videos_latest_videos_list&sort_by=post_date&from=${pg}&_=1709730132217`
         } else {
-            cateUrl = extend_type.replace(/\/$/, "") + `/${pg}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=${sort_by}&_=${new Date().getTime()}`
+            cateUrl = extend_type + `/${pg}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=${sort_by}&_=${new Date().getTime()}`
         }
         let $ = await this.getHtml(cateUrl);
         this.vodList = await this.parseVodShortListFromDoc($)
@@ -308,7 +278,7 @@ class JableTVSpider extends Spider {
     async setSearch(wd, quick) {
         let searchUrl = this.siteUrl + `/search/${wd}/`
         let $ = await this.getHtml(searchUrl)
-        this.vodList = await this.parseVodShortListFromDoc($)
+        this.vodList = await this.parseVodShortListFromDocByCategory($)
     }
 }
 
