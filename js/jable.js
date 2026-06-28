@@ -242,7 +242,25 @@ class JableTVSpider extends Spider {
 
     async setHomeVod() {
         let $ = await this.getHtml(this.siteUrl)
-        this.homeVodList = await this.parseVodShortListFromDoc($)
+        if ($ === null || $ === undefined) {
+            this.homeVodList = [{
+                vod_id: "diag",
+                vod_name: "❌getHtml失败 站点:" + this.siteUrl,
+                vod_pic: "",
+                vod_remarks: "cat.js req 可能无法访问 fs1.app"
+            }]
+            return
+        }
+        try {
+            this.homeVodList = await this.parseVodShortListFromDoc($)
+        } catch (e) {
+            this.homeVodList = [{
+                vod_id: "diag",
+                vod_name: "❌解析失败:" + e.message,
+                vod_pic: "",
+                vod_remarks: ""
+            }]
+        }
     }
 
     async setDetail(id) {
