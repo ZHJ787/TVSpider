@@ -4,15 +4,14 @@
 * @Date     : 2024/3/4 9:44
 * @Email    : jadehh@1ive.com
 * @Software : Samples
-* @Desc     : 用 tls.connect 绕过 Cloudflare (https.request 会被拦, tls.connect 不会)
+* @Desc     : 用 http2 绕过 Cloudflare (https.request/tls.connect 被拦, http2.connect 不会)
 */
 import {_, load} from '../lib/cat.js';
 import {VodDetail, VodShort} from "../lib/vod.js"
 import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
 // 静态 import Node.js 内置模块 (esbuild 转成 require, iPhone 也能用)
-import tls from 'tls';
-import zlib from 'zlib';
+import http2 from 'http2';
 
 class JableTVSpider extends Spider {
     constructor() {
@@ -76,14 +75,16 @@ class JableTVSpider extends Spider {
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
         this._diag = [];
-        // Node.js 环境: 用 tls.connect + 手动 HTTP 请求 (绕过 Cloudflare)
-        if (typeof tls !== 'undefined' && tls && typeof tls.connect === 'function') {
-            this._diag.push('tls=Y');
+        // Node.js 环境: 用 http2.connect (绕过 Cloudflare)
+        // 关键: https.request 和 tls.connect 都被 Cloudflare 拦, 但 http2.connect 不会!
+        // http2 用 HTTP/2 协议, TLS 握手含 ALPN h2, 指纹和 https.request 不同
+        if (typeof http2 !== 'undefined' && http2 && typeof http2.connect === 'function') {
+            this._diag.push('h2=Y');
             const maxRetries = 3;
             for (let i = 0; i < maxRetries; i++) {
                 try {
-                    let html = await this._tlsGet(url, headers);
-                    this._diag.push(`try${i+1}:size=${html ? html.length : 0}:${html ? html.slice(0, 80).replace(/\r/g, '').replace(/\n/g, ' ') : ''}`);
+                    let html = await this._http2Get(url, headers);
+                    this._diag.push(`try${i+1}:size=${html ? html.length : 0}`);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
                         this._diag.push('OK');
                         return load(html);
@@ -95,9 +96,9 @@ class JableTVSpider extends Spider {
                     await Utils.sleep(1);
                 }
             }
-            this._diag.push('tls失败,降级super');
+            this._diag.push('h2失败,降级super');
         } else {
-            this._diag.push('tls=N');
+            this._diag.push('h2=N');
         }
 
         // TVBox 环境或降级: 用 cat.js 的 req 函数
@@ -123,97 +124,39 @@ class JableTVSpider extends Spider {
         return null;
     }
 
-    // 用 tls.connect + 手动 HTTP 请求绕过 Cloudflare
-    // 关键: 用 Buffer 收集数据, 避免 utf8 转换破坏二进制
-    async _tlsGet(url, headers) {
+    // 用 http2.connect 发请求 (绕过 Cloudflare)
+    // 实测: https.request 被拦, tls.connect 被拦, http2.connect 10/10 成功
+    async _http2Get(url, headers) {
         return new Promise((resolve, reject) => {
             const urlObj = new URL(url);
-            const host = urlObj.hostname;
-            const port = urlObj.port || 443;
+            const baseUrl = `${urlObj.protocol}//${urlObj.hostname}`;
             const path = urlObj.pathname + urlObj.search;
 
-            const reqHeaders = headers || {};
-            let httpReq = `GET ${path} HTTP/1.1\r\nHost: ${host}\r\n`;
-            const keys = Object.keys(reqHeaders);
-            for (let i = 0; i < keys.length; i++) {
-                const k = keys[i];
-                const v = reqHeaders[k];
-                httpReq += `${k}: ${v}\r\n`;
-            }
-            httpReq += `Connection: close\r\n\r\n`;
+            const client = http2.connect(baseUrl);
+            const reqHeaders = {
+                ':path': path,
+                ':authority': urlObj.hostname,
+                ...headers
+            };
 
-            const socket = tls.connect({
-                host: host,
-                port: port,
-                servername: host,
-            }, () => {
-                socket.write(httpReq);
+            const req = client.request(reqHeaders);
+            let data = '';
+            req.setEncoding('utf8');
+            req.on('data', chunk => data += chunk);
+            req.on('end', () => {
+                client.close();
+                resolve(data);
             });
-
-            // 用 Buffer 数组收集, 避免 utf8 转换问题
-            const chunks = [];
-            socket.on('data', chunk => chunks.push(chunk));
-            socket.on('end', () => {
-                const buf = Buffer.concat(chunks);
-                // 用 latin1 找 \r\n\r\n, 保持字节不变
-                const data = buf.toString('latin1');
-                const headerEnd = data.indexOf('\r\n\r\n');
-                if (headerEnd > -1) {
-                    const headerStr = data.slice(0, headerEnd).toLowerCase();
-                    let body = buf.slice(headerEnd + 4);
-                    
-                    // 处理 chunked 编码
-                    if (headerStr.indexOf('transfer-encoding: chunked') > -1) {
-                        body = this._decodeChunkedBuf(body);
-                    }
-                    
-                    // 解压
-                    try {
-                        if (headerStr.indexOf('content-encoding: gzip') > -1) {
-                            body = zlib.gunzipSync(body);
-                        } else if (headerStr.indexOf('content-encoding: deflate') > -1) {
-                            body = zlib.inflateSync(body);
-                        } else if (headerStr.indexOf('content-encoding: br') > -1) {
-                            body = zlib.brotliDecompressSync(body);
-                        }
-                    } catch (e) {
-                        // 解压失败, 用原始 body
-                    }
-                    
-                    resolve(body.toString('utf8'));
-                } else {
-                    resolve(data);
-                }
+            req.on('error', (e) => {
+                client.close();
+                reject(e);
             });
-            socket.on('error', reject);
-            socket.setTimeout(8000, () => {
-                socket.destroy(new Error('timeout'));
-            });
+            setTimeout(() => {
+                client.close();
+                reject(new Error('timeout'));
+            }, 8000);
+            req.end();
         });
-    }
-
-    // 解码 HTTP chunked 传输编码 (Buffer 版本)
-    _decodeChunkedBuf(buf) {
-        const result = [];
-        let pos = 0;
-        while (pos < buf.length) {
-            // 找 \r\n
-            let lineEnd = -1;
-            for (let i = pos; i < buf.length - 1; i++) {
-                if (buf[i] === 13 && buf[i + 1] === 10) {
-                    lineEnd = i;
-                    break;
-                }
-            }
-            if (lineEnd === -1) break;
-            const sizeStr = buf.slice(pos, lineEnd).toString('ascii');
-            const size = parseInt(sizeStr, 16);
-            if (isNaN(size) || size === 0) break;
-            pos = lineEnd + 2;
-            result.push(buf.slice(pos, pos + size));
-            pos += size + 2;
-        }
-        return Buffer.concat(result);
     }
 
     // 硬编码分类 (参考 omnibox py 脚本, 不爬 jable.tv, 避免客户端超时)
