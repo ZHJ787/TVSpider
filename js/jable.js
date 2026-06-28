@@ -72,23 +72,36 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        // Node.js 环境下直接用 https 模块, 绕过 cat.js 的 req 函数 (axios 封装有 bug)
-        // cat.js 的 req 函数间歇性返回空响应 {headers:{},content:""}
-        // Node.js 原生 https 模块更稳定, 默认 TLS 指纹能过 Cloudflare
-        // TVBox 的 QuickJS 环境没有 globalThis.require, 会走降级路径
+        // 优先级 1: curl-impersonate 二进制 (chrome TLS 指纹, 稳定绕过 Cloudflare)
+        // 仅 Linux x64 环境可用 (二进制运行时从 GitHub Release 下载)
+        if (typeof globalThis.require === 'function' && process && process.platform === 'linux' && process.arch === 'x64') {
+            try {
+                let html = await this._curlImpersonateGet(url, headers);
+                if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
+                    await this.jadeLog.info(`curl-impersonate 成功, size=${html.length}`);
+                    return load(html);
+                }
+                await this.jadeLog.warning(`curl-impersonate 失败 (size=${html ? html.length : 0}), 降级到 Node.js 原生 https: ${url}`);
+            } catch (e) {
+                await this.jadeLog.warning(`curl-impersonate 异常: ${e.message}, 降级到 Node.js 原生 https`);
+            }
+        }
+        
+        // 优先级 2: Node.js 原生 https (默认 TLS, 偶尔能过 Cloudflare)
         if (typeof globalThis.require === 'function') {
             try {
                 let html = await this._nodeHttpsGet(url, headers);
                 if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
                     return load(html);
                 }
-                // 如果 Node.js 原生请求也拿到挑战页或空, 降级到 super.getHtml
                 await this.jadeLog.warning(`Node.js 原生请求失败, 降级到 super.getHtml: ${url}`);
             } catch (e) {
                 await this.jadeLog.warning(`Node.js 原生请求异常: ${e.message}, 降级到 super.getHtml`);
             }
         }
-        // TVBox 环境或降级路径: 用 cat.js 的 req 函数 + 挑战页检测重试
+        
+        // 优先级 3: cat.js 的 req 函数 (axios 封装, 带 Cloudflare 挑战页检测重试)
+        // TVBox 的 QuickJS 环境会走这个路径
         const maxRetries = 5;
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
@@ -107,6 +120,83 @@ class JableTVSpider extends Spider {
         }
         await this.jadeLog.error(`getHtml 重试 ${maxRetries} 次仍失败: ${url}`);
         return null;
+    }
+
+    // curl-impersonate 二进制调用 (chrome TLS 指纹)
+    // 二进制从 GitHub Release 下载, 缓存到临时文件
+    // 仅 Linux x64 环境 (其他平台降级到 Node.js 原生 https)
+    async _curlImpersonateGet(url, headers) {
+        const fs = globalThis.require('fs');
+        const os = globalThis.require('os');
+        const path = globalThis.require('path');
+        const { spawnSync } = globalThis.require('child_process');
+        const https = globalThis.require('https');
+        
+        const tmpDir = os.tmpdir();
+        const binPath = path.join(tmpDir, 'curl-impersonate-chrome-linux-x86');
+        
+        // 下载二进制 (如果还没缓存)
+        if (!fs.existsSync(binPath)) {
+            await this.jadeLog.info('下载 curl-impersonate 二进制 (首次使用, 约 3MB)...');
+            const downloadUrl = 'https://github.com/ZHJ787/TVSpider/releases/download/v1/curl-impersonate-chrome-linux-x86';
+            await new Promise((resolve, reject) => {
+                const file = fs.createWriteStream(binPath);
+                https.get(downloadUrl, (res) => {
+                    if (res.statusCode === 302 || res.statusCode === 301) {
+                        // 跟随重定向
+                        https.get(res.headers.location, (res2) => {
+                            res2.pipe(file);
+                            file.on('finish', () => {
+                                file.close();
+                                fs.chmodSync(binPath, 0o755);
+                                resolve();
+                            });
+                        }).on('error', reject);
+                    } else if (res.statusCode === 200) {
+                        res.pipe(file);
+                        file.on('finish', () => {
+                            file.close();
+                            fs.chmodSync(binPath, 0o755);
+                            resolve();
+                        });
+                    } else {
+                        reject(new Error(`下载失败 HTTP ${res.statusCode}`));
+                    }
+                }).on('error', reject);
+            });
+            await this.jadeLog.info(`curl-impersonate 二进制已下载到: ${binPath}`);
+        }
+        
+        // 调用 curl-impersonate
+        return new Promise((resolve, reject) => {
+            const args = [
+                '-s', '-o', '-',
+                '-w', '\n__HTTP_CODE__:%{http_code}',
+                '--ciphers', 'TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,ECDHE-ECDSA-AES128-GCM-SHA256,ECDHE-RSA-AES128-GCM-SHA256,ECDHE-ECDSA-AES256-GCM-SHA384,ECDHE-RSA-AES256-GCM-SHA384,ECDHE-ECDSA-CHACHA20-POLY1305,ECDHE-RSA-CHACHA20-POLY1305',
+                '--http2', '--compressed', '--tlsv1.2', '--alps', '--tls-permute-extensions',
+                '--max-time', '15'
+            ];
+            for (const [k, v] of Object.entries(headers || {})) {
+                args.push('-H', `${k}: ${v}`);
+            }
+            args.push(url);
+            
+            const r = spawnSync(binPath, args, { encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 });
+            if (r.error) {
+                reject(new Error('curl-impersonate 调用失败: ' + r.error.message));
+                return;
+            }
+            const out = r.stdout.toString('utf8');
+            const idx = out.lastIndexOf('__HTTP_CODE__:');
+            const code = idx > -1 ? out.slice(idx + 14).trim() : 'N/A';
+            const body = idx > -1 ? out.slice(0, idx) : out;
+            
+            if (code !== '200') {
+                reject(new Error(`curl-impersonate HTTP ${code}`));
+                return;
+            }
+            resolve(body);
+        });
     }
 
     // Node.js 原生 https GET 请求, 自动处理 gzip/deflate/br 解压
