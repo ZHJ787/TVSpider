@@ -95,12 +95,29 @@ class NodeJSSpider extends Spider {
     async home(inReq, _outResp) {
         this.vodList = []
         await this.jadeLog.info("正在解析首页", true)
-        await this.setHome()
-        // 关键: home 接口不调 setHomeVod, 直接返回空 list
-        // 因为 setHomeVod 要抓 jable.tv 首页, 会被 Cloudflare 拦导致超时
-        // 客户端看到分类后, 点分类调 category (用 jable.tv 异步 API, 更稳定)
-        this.homeVodList = []
-        await this.jadeLog.info("首页解析完成 (list 为空, 点分类看视频)", true)
+        // 直接调 setClasses + setFilterObj (不依赖 init)
+        // 因为 setHome 在父类是空方法, 不会设置 classes
+        try {
+            await this.setClasses()
+            await this.setFilterObj()
+        } catch (e) {
+            await this.jadeLog.error(`setClasses/setFilterObj 失败:${e}`)
+        }
+        // setHomeVod 抓 jable.tv 首页视频, 用 tls.connect 绕过 Cloudflare
+        // 限时 8 秒, 超时返回空 list (不影响分类显示)
+        try {
+            await Promise.race([
+                this.setHomeVod(),
+                new Promise((resolve) => setTimeout(() => {
+                    this.homeVodList = [];
+                    resolve();
+                }, 8000))
+            ]);
+        } catch (e) {
+            await this.jadeLog.error(`首页推荐视频获取失败:${e}`)
+            this.homeVodList = []
+        }
+        await this.jadeLog.info("首页解析完成", true)
         return this.result.home(this.classes, this.homeVodList, this.filterObj)
     }
 

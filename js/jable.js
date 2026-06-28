@@ -4,15 +4,14 @@
 * @Date     : 2024/3/4 9:44
 * @Email    : jadehh@1ive.com
 * @Software : Samples
-* @Desc     : 纯 Node.js 绕过 Cloudflare (静态 import https 模块)
+* @Desc     : 用 tls.connect 绕过 Cloudflare (https.request 会被拦, tls.connect 不会)
 */
 import {_, load} from '../lib/cat.js';
 import {VodDetail, VodShort} from "../lib/vod.js"
 import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
-// 静态 import Node.js 内置模块 (esbuild 会转成 require, 在 iPhone Node.js 也能用)
-// 不能用 globalThis.require, 因为 iPhone Mira Play 环境里 globalThis.require 不存在
-import https from 'https';
+// 静态 import Node.js 内置模块 (esbuild 转成 require, iPhone 也能用)
+import tls from 'tls';
 import zlib from 'zlib';
 
 class JableTVSpider extends Spider {
@@ -20,6 +19,8 @@ class JableTVSpider extends Spider {
         super();
         this.siteUrl = "https://jable.tv"
         this.cookie = ""
+        // 防止 esbuild tree-shake 消除 getHtml
+        this.__getHtmlRef = this.getHtml
     }
 
     async spiderInit(inReq = null) {
@@ -67,19 +68,21 @@ class JableTVSpider extends Spider {
             "Host": "jable.tv",
             "Postman-Token": "33290483-3c8d-413f-a160-0d3aea9e6f95",
             "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "identity",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Cache-Control": "no-cache"
         };
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        // Node.js 环境: 用静态 import 的 https 模块 + 重试
-        if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
+        // Node.js 环境: 用 tls.connect + 手动 HTTP 请求 (绕过 Cloudflare)
+        // 关键: https.request 会被 Cloudflare 拦截, 但 tls.connect 不会!
+        // 原因: https.request 内部加了 TLS 扩展导致指纹变化, tls.connect 用最简 TLS 握手
+        if (typeof tls !== 'undefined' && tls && typeof tls.connect === 'function') {
             const maxRetries = 3;
             for (let i = 0; i < maxRetries; i++) {
                 try {
-                    let html = await this._nodeHttpsGet(url, headers);
+                    let html = await this._tlsGet(url, headers);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
                         return load(html);
                     }
@@ -109,35 +112,97 @@ class JableTVSpider extends Spider {
         return null;
     }
 
-    // Node.js 原生 https GET, 用静态 import 的 https/zlib 模块
-    // 单次超时 8 秒 (降低, 避免 PeekPlayer 整体超时)
-    async _nodeHttpsGet(url, headers) {
+    // 用 tls.connect + 手动 HTTP 请求绕过 Cloudflare
+    // 关键: 用 Buffer 收集数据, 避免 utf8 转换破坏二进制
+    async _tlsGet(url, headers) {
         return new Promise((resolve, reject) => {
-            const req = https.request(url, {
-                method: 'GET',
-                headers: headers || {}
-            }, (res) => {
-                const chunks = [];
-                res.on('data', c => chunks.push(c));
-                res.on('end', () => {
-                    try {
-                        let body = Buffer.concat(chunks);
-                        const encoding = res.headers['content-encoding'];
-                        if (encoding === 'gzip') body = zlib.gunzipSync(body);
-                        else if (encoding === 'deflate') body = zlib.inflateSync(body);
-                        else if (encoding === 'br') body = zlib.brotliDecompressSync(body);
-                        resolve(body.toString('utf8'));
-                    } catch (e) {
-                        reject(new Error('decompress failed: ' + e.message));
+            const urlObj = new URL(url);
+            const host = urlObj.hostname;
+            const port = urlObj.port || 443;
+            const path = urlObj.pathname + urlObj.search;
+
+            const reqHeaders = headers || {};
+            let httpReq = `GET ${path} HTTP/1.1\r\nHost: ${host}\r\n`;
+            const keys = Object.keys(reqHeaders);
+            for (let i = 0; i < keys.length; i++) {
+                const k = keys[i];
+                const v = reqHeaders[k];
+                httpReq += `${k}: ${v}\r\n`;
+            }
+            httpReq += `Connection: close\r\n\r\n`;
+
+            const socket = tls.connect({
+                host: host,
+                port: port,
+                servername: host,
+            }, () => {
+                socket.write(httpReq);
+            });
+
+            // 用 Buffer 数组收集, 避免 utf8 转换问题
+            const chunks = [];
+            socket.on('data', chunk => chunks.push(chunk));
+            socket.on('end', () => {
+                const buf = Buffer.concat(chunks);
+                // 用 latin1 找 \r\n\r\n, 保持字节不变
+                const data = buf.toString('latin1');
+                const headerEnd = data.indexOf('\r\n\r\n');
+                if (headerEnd > -1) {
+                    const headerStr = data.slice(0, headerEnd).toLowerCase();
+                    let body = buf.slice(headerEnd + 4);
+                    
+                    // 处理 chunked 编码
+                    if (headerStr.indexOf('transfer-encoding: chunked') > -1) {
+                        body = this._decodeChunkedBuf(body);
                     }
-                });
+                    
+                    // 解压
+                    try {
+                        if (headerStr.indexOf('content-encoding: gzip') > -1) {
+                            body = zlib.gunzipSync(body);
+                        } else if (headerStr.indexOf('content-encoding: deflate') > -1) {
+                            body = zlib.inflateSync(body);
+                        } else if (headerStr.indexOf('content-encoding: br') > -1) {
+                            body = zlib.brotliDecompressSync(body);
+                        }
+                    } catch (e) {
+                        // 解压失败, 用原始 body
+                    }
+                    
+                    resolve(body.toString('utf8'));
+                } else {
+                    resolve(data);
+                }
             });
-            req.on('error', reject);
-            req.setTimeout(8000, () => {
-                req.destroy(new Error('timeout'));
+            socket.on('error', reject);
+            socket.setTimeout(8000, () => {
+                socket.destroy(new Error('timeout'));
             });
-            req.end();
         });
+    }
+
+    // 解码 HTTP chunked 传输编码 (Buffer 版本)
+    _decodeChunkedBuf(buf) {
+        const result = [];
+        let pos = 0;
+        while (pos < buf.length) {
+            // 找 \r\n
+            let lineEnd = -1;
+            for (let i = pos; i < buf.length - 1; i++) {
+                if (buf[i] === 13 && buf[i + 1] === 10) {
+                    lineEnd = i;
+                    break;
+                }
+            }
+            if (lineEnd === -1) break;
+            const sizeStr = buf.slice(pos, lineEnd).toString('ascii');
+            const size = parseInt(sizeStr, 16);
+            if (isNaN(size) || size === 0) break;
+            pos = lineEnd + 2;
+            result.push(buf.slice(pos, pos + size));
+            pos += size + 2;
+        }
+        return Buffer.concat(result);
     }
 
     // 硬编码分类 (参考 omnibox py 脚本, 不爬 jable.tv, 避免客户端超时)
@@ -265,7 +330,7 @@ class JableTVSpider extends Spider {
         if (tid.indexOf("latest-updates") > 1) {
             cateUrl = `https://jable.tv/latest-updates/?mode=async&function=get_block&block_id=list_videos_latest_videos_list&sort_by=post_date&from=${pg}&_=1709730132217`
         } else {
-            cateUrl = extend_type + `/${pg}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=${sort_by}&_=${new Date().getTime()}`
+            cateUrl = extend_type.replace(/\/$/, "") + `/${pg}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=${sort_by}&_=${new Date().getTime()}`
         }
         let $ = await this.getHtml(cateUrl);
         this.vodList = await this.parseVodShortListFromDoc($)
