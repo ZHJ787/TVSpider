@@ -76,11 +76,9 @@ class JableTVSpider extends Spider {
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
         this._diag = [];
         // Node.js 环境: 用 http2.connect (绕过 Cloudflare)
-        // 关键: https.request 和 tls.connect 都被 Cloudflare 拦, 但 http2.connect 不会!
-        // http2 用 HTTP/2 协议, TLS 握手含 ALPN h2, 指纹和 https.request 不同
         if (typeof http2 !== 'undefined' && http2 && typeof http2.connect === 'function') {
             this._diag.push('h2=Y');
-            const maxRetries = 3;
+            const maxRetries = 1;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._http2Get(url, headers);
