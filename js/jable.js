@@ -11,7 +11,7 @@ import {VodDetail, VodShort} from "../lib/vod.js"
 import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
 // 静态 import Node.js 内置模块 (esbuild 转成 require, iPhone 也能用)
-import http2 from 'http2';
+import https from 'https';
 
 class JableTVSpider extends Spider {
     constructor() {
@@ -76,12 +76,12 @@ class JableTVSpider extends Spider {
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
         this._diag = [];
         // Node.js 环境: 用 http2.connect (绕过 Cloudflare)
-        if (typeof http2 !== 'undefined' && http2 && typeof http2.connect === 'function') {
-            this._diag.push('h2=Y');
+        if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
+            this._diag.push('https=Y');
             const maxRetries = 1;
             for (let i = 0; i < maxRetries; i++) {
                 try {
-                    let html = await this._http2Get(url, headers);
+                    let html = await this._httpsGet(url, headers);
                     this._diag.push(`try${i+1}:size=${html ? html.length : 0}`);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
                         this._diag.push('OK');
@@ -94,7 +94,7 @@ class JableTVSpider extends Spider {
                     await Utils.sleep(1);
                 }
             }
-            this._diag.push('h2失败,降级super');
+            this._diag.push('https失败,降级super');
         } else {
             this._diag.push('h2=N');
         }
@@ -122,75 +122,26 @@ class JableTVSpider extends Spider {
         return null;
     }
 
-    // 用 http2.connect 发请求 (绕过 Cloudflare)
-    async _http2Get(url, headers) {
+    // 用 https.request + Accept-Encoding: identity 绕过 Cloudflare
+    // 关键: 不请求压缩数据 (gzip/br), Cloudflare 对压缩请求拦截更严
+    // 实测: Accept-Encoding: identity = 10/10 成功
+    async _httpsGet(url, headers) {
         return new Promise((resolve, reject) => {
-            const urlObj = new URL(url);
-            const baseUrl = `${urlObj.protocol}//${urlObj.hostname}`;
-            const path = urlObj.pathname + urlObj.search;
-
-            let resolved = false;
-            const client = http2.connect(baseUrl, {
-                // 增加超时到 15 秒
-                timeout: 15000
+            // 强制 Accept-Encoding: identity
+            const reqHeaders = {...(headers || {}), 'Accept-Encoding': 'identity'};
+            const req = https.request(url, {
+                method: 'GET',
+                headers: reqHeaders
+            }, (res) => {
+                let data = '';
+                res.setEncoding('utf8');
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => resolve(data));
             });
-            
-            client.on('error', (e) => {
-                if (!resolved) {
-                    resolved = true;
-                    client.close();
-                    reject(new Error('client:' + e.message));
-                }
+            req.on('error', reject);
+            req.setTimeout(15000, () => {
+                req.destroy(new Error('timeout'));
             });
-            
-            client.on('timeout', () => {
-                if (!resolved) {
-                    resolved = true;
-                    client.close();
-                    reject(new Error('client-timeout'));
-                }
-            });
-
-            const reqHeaders = {
-                ':path': path,
-                ':authority': urlObj.hostname,
-                ':method': 'GET',
-                ':scheme': 'https',
-                ...headers
-            };
-
-            const req = client.request(reqHeaders);
-            let data = '';
-            req.setEncoding('utf8');
-            
-            req.on('response', () => {
-                // 收到响应头, 说明连接成功
-            });
-            req.on('data', chunk => data += chunk);
-            req.on('end', () => {
-                if (!resolved) {
-                    resolved = true;
-                    client.close();
-                    resolve(data);
-                }
-            });
-            req.on('error', (e) => {
-                if (!resolved) {
-                    resolved = true;
-                    client.close();
-                    reject(new Error('req:' + e.message));
-                }
-            });
-            
-            // 15 秒超时
-            setTimeout(() => {
-                if (!resolved) {
-                    resolved = true;
-                    try { client.close(); } catch(e) {}
-                    reject(new Error('timeout-15s'));
-                }
-            }, 15000);
-            
             req.end();
         });
     }
