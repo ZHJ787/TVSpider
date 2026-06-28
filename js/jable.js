@@ -7,6 +7,8 @@ import {_, load} from '../lib/cat.js';
 import {VodDetail, VodShort} from "../lib/vod.js"
 import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
+import https from "https";
+import zlib from "zlib";
 
 
 class JableTVSpider extends Spider {
@@ -71,8 +73,22 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        // fs1.app 是 jable.tv 镜像, Cloudflare 只检查 UA, 不检查 TLS 指纹
-        // 用 cat.js req + PostmanRuntime UA 就能绕过
+        // 用静态 import 的 https 模块访问 fs1.app (Cloudflare 只检查 UA)
+        if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
+            const maxRetries = 3;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    let html = await this._httpsGet(url, headers);
+                    if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
+                        return load(html);
+                    }
+                    await Utils.sleep(1);
+                } catch (e) {
+                    await Utils.sleep(1);
+                }
+            }
+        }
+        // 降级: cat.js req
         const maxRetries = 3;
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
@@ -83,6 +99,34 @@ class JableTVSpider extends Spider {
             return $;
         }
         return null;
+    }
+
+    async _httpsGet(url, headers) {
+        return new Promise((resolve, reject) => {
+            const reqHeaders = {...(headers || {}), 'Accept-Encoding': 'identity'};
+            const req = https.request(url, {
+                method: 'GET',
+                headers: reqHeaders
+            }, (res) => {
+                let chunks = [];
+                res.on('data', c => chunks.push(c));
+                res.on('end', () => {
+                    try {
+                        let body = Buffer.concat(chunks);
+                        const encoding = res.headers['content-encoding'];
+                        if (encoding === 'gzip') body = zlib.gunzipSync(body);
+                        else if (encoding === 'deflate') body = zlib.inflateSync(body);
+                        else if (encoding === 'br') body = zlib.brotliDecompressSync(body);
+                        resolve(body.toString('utf8'));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.setTimeout(10000, () => req.destroy(new Error('timeout')));
+            req.end();
+        });
     }
 
     async setClasses() {
