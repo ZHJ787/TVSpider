@@ -123,36 +123,74 @@ class JableTVSpider extends Spider {
     }
 
     // 用 http2.connect 发请求 (绕过 Cloudflare)
-    // 实测: https.request 被拦, tls.connect 被拦, http2.connect 10/10 成功
     async _http2Get(url, headers) {
         return new Promise((resolve, reject) => {
             const urlObj = new URL(url);
             const baseUrl = `${urlObj.protocol}//${urlObj.hostname}`;
             const path = urlObj.pathname + urlObj.search;
 
-            const client = http2.connect(baseUrl);
+            let resolved = false;
+            const client = http2.connect(baseUrl, {
+                // 增加超时到 15 秒
+                timeout: 15000
+            });
+            
+            client.on('error', (e) => {
+                if (!resolved) {
+                    resolved = true;
+                    client.close();
+                    reject(new Error('client:' + e.message));
+                }
+            });
+            
+            client.on('timeout', () => {
+                if (!resolved) {
+                    resolved = true;
+                    client.close();
+                    reject(new Error('client-timeout'));
+                }
+            });
+
             const reqHeaders = {
                 ':path': path,
                 ':authority': urlObj.hostname,
+                ':method': 'GET',
+                ':scheme': 'https',
                 ...headers
             };
 
             const req = client.request(reqHeaders);
             let data = '';
             req.setEncoding('utf8');
+            
+            req.on('response', () => {
+                // 收到响应头, 说明连接成功
+            });
             req.on('data', chunk => data += chunk);
             req.on('end', () => {
-                client.close();
-                resolve(data);
+                if (!resolved) {
+                    resolved = true;
+                    client.close();
+                    resolve(data);
+                }
             });
             req.on('error', (e) => {
-                client.close();
-                reject(e);
+                if (!resolved) {
+                    resolved = true;
+                    client.close();
+                    reject(new Error('req:' + e.message));
+                }
             });
+            
+            // 15 秒超时
             setTimeout(() => {
-                client.close();
-                reject(new Error('timeout'));
-            }, 8000);
+                if (!resolved) {
+                    resolved = true;
+                    try { client.close(); } catch(e) {}
+                    reject(new Error('timeout-15s'));
+                }
+            }, 15000);
+            
             req.end();
         });
     }
