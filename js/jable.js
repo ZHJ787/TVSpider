@@ -186,22 +186,34 @@ class JableTVSpider extends Spider {
     }
 
     async setClasses() {
-        let $ = await this.getHtml(this.siteUrl)
-        let navElements = $("[class=\"title-box\"]")
-        let defaultTypeIdElements = $("div.row")
-        for (const navElement of $(defaultTypeIdElements[0]).find("a")) {
-            let type_name = $(navElement).text()
-            let type_id = navElement.attribs.href
-            if (type_id.indexOf(this.siteUrl) > -1) {
-                this.classes.push(this.getTypeDic(type_name, type_id))
+        try {
+            let $ = await this.getHtml(this.siteUrl)
+            if ($ === null || $ === undefined) {
+                // getHtml 失败, 把诊断信息塞到 classes
+                this.classes = [{ type_name: "❌getHtml失败,诊断:", type_id: "diag" }]
+                this._diag.forEach(d => this.classes.push({ type_name: d, type_id: "diag" }))
+                return
             }
-        }
-        navElements = navElements.slice(1, 9)
-        defaultTypeIdElements = defaultTypeIdElements.slice(1, 9)
-        for (let i = 0; i < navElements.length; i++) {
-            let typeId = $(defaultTypeIdElements[i]).find("a")[0].attribs["href"]
-            this.classes.push(this.getTypeDic("标签", typeId));
-            break
+            let navElements = $("[class=\"title-box\"]")
+            let defaultTypeIdElements = $("div.row")
+            for (const navElement of $(defaultTypeIdElements[0]).find("a")) {
+                let type_name = $(navElement).text()
+                let type_id = navElement.attribs.href
+                if (type_id.indexOf(this.siteUrl) > -1) {
+                    this.classes.push(this.getTypeDic(type_name, type_id))
+                }
+            }
+            navElements = navElements.slice(1, 9)
+            defaultTypeIdElements = defaultTypeIdElements.slice(1, 9)
+            for (let i = 0; i < navElements.length; i++) {
+                let typeId = $(defaultTypeIdElements[i]).find("a")[0].attribs["href"]
+                this.classes.push(this.getTypeDic("标签", typeId));
+                break
+            }
+        } catch (e) {
+            // setClasses 异常, 把错误信息塞到 classes
+            this.classes = [{ type_name: "❌setClasses异常:" + e.message, type_id: "diag" }]
+            this._diag.forEach(d => this.classes.push({ type_name: d, type_id: "diag" }))
         }
     }
 
