@@ -70,24 +70,33 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        // Node.js 环境: 用原生 https + TLS 1.2 ECDHE ciphers 绕过 Cloudflare
-        // 实测 90% 成功率, 首次请求可能 403, 重试后 100% 成功
+        // 诊断信息收集
+        this._diag = this._diag || [];
+        
+        // Node.js 环境: 用原生 https
         if (typeof globalThis.require === 'function') {
+            this._diag.push(`[env] globalThis.require=function, platform=${typeof process !== 'undefined' ? process.platform + '/' + process.arch : 'unknown'}`);
             const maxRetries = 5;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._nodeHttpsGet(url, headers);
+                    this._diag.push(`[try ${i+1}] _nodeHttpsGet 返回 size=${html ? html.length : 0}`);
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0 && html.indexOf("cf_chl_opt") < 0) {
-                        return load(html);
+                        this._diag.push(`[try ${i+1}] 解析成功, 调用 load()`);
+                        let $ = load(html);
+                        this._diag.push(`[try ${i+1}] load() 完成, typeof $=${typeof $}`);
+                        return $;
                     }
-                    await this.jadeLog.warning(`Node.js 请求失败或挑战页 (第 ${i + 1}/${maxRetries} 次), 1 秒后重试: ${url}`);
+                    this._diag.push(`[try ${i+1}] 挑战页或空, 重试`);
                     await Utils.sleep(1);
                 } catch (e) {
-                    await this.jadeLog.warning(`Node.js 请求异常 (第 ${i + 1}/${maxRetries} 次): ${e.message}, 1 秒后重试`);
+                    this._diag.push(`[try ${i+1}] 异常: ${e.message}`);
                     await Utils.sleep(1);
                 }
             }
-            await this.jadeLog.error(`Node.js 请求 ${maxRetries} 次仍失败, 降级到 super.getHtml: ${url}`);
+            this._diag.push(`[fallback] Node.js 失败, 降级到 super.getHtml`);
+        } else {
+            this._diag.push(`[env] globalThis.require 不存在 (typeof=${typeof globalThis.require})`);
         }
 
         // TVBox 环境或降级: 用 cat.js 的 req 函数 + 挑战页检测重试
@@ -95,19 +104,24 @@ class JableTVSpider extends Spider {
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
+                this._diag.push(`[super ${i+1}] 返回 null`);
                 await Utils.sleep(1);
                 continue;
             }
             let title = $("title").text() || "";
             let html = $.html() || "";
             if (title.indexOf("Just a moment") > -1 || html.indexOf("cf_chl_opt") > -1 || html.length < 1000) {
-                await this.jadeLog.warning(`Cloudflare 挑战页 (第 ${i + 1}/${maxRetries} 次), 1 秒后重试: ${url}`);
+                this._diag.push(`[super ${i+1}] 挑战页, 重试`);
                 await Utils.sleep(1);
                 continue;
             }
+            this._diag.push(`[super ${i+1}] 成功`);
             return $;
         }
         await this.jadeLog.error(`getHtml 重试 ${maxRetries} 次仍失败: ${url}`);
+        // 把诊断信息存到 classes, 客户端 home 接口能看到
+        this.classes = [{ type_name: "诊断信息", type_id: "diag" }];
+        this._diag.forEach(d => this.classes.push({ type_name: d, type_id: "diag" }));
         return null;
     }
 
