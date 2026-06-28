@@ -59,7 +59,6 @@ class JableTVSpider extends Spider {
 
     getHeader() {
         // PostmanRuntime UA + Postman-Token 是绕过 jable.tv Cloudflare 挑战的关键组合
-        // 必须带 Accept 和 Accept-Encoding, 否则有些请求会返回空响应
         let header = {
             "User-Agent": "PostmanRuntime/7.36.3",
             "Host": "jable.tv",
@@ -73,28 +72,79 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        // 重试机制: Cloudflare 经常返回 200 但内容是挑战页 (Just a moment...)
-        // 检测到挑战页时重试, 最多 5 次, 每次间隔 1 秒
+        // Node.js 环境下直接用 https 模块, 绕过 cat.js 的 req 函数 (axios 封装有 bug)
+        // cat.js 的 req 函数间歇性返回空响应 {headers:{},content:""}
+        // Node.js 原生 https 模块更稳定, 默认 TLS 指纹能过 Cloudflare
+        // TVBox 的 QuickJS 环境没有 globalThis.require, 会走降级路径
+        if (typeof globalThis.require === 'function') {
+            try {
+                let html = await this._nodeHttpsGet(url, headers);
+                if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
+                    return load(html);
+                }
+                // 如果 Node.js 原生请求也拿到挑战页或空, 降级到 super.getHtml
+                await this.jadeLog.warning(`Node.js 原生请求失败, 降级到 super.getHtml: ${url}`);
+            } catch (e) {
+                await this.jadeLog.warning(`Node.js 原生请求异常: ${e.message}, 降级到 super.getHtml`);
+            }
+        }
+        // TVBox 环境或降级路径: 用 cat.js 的 req 函数 + 挑战页检测重试
         const maxRetries = 5;
         for (let i = 0; i < maxRetries; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
-                // super.getHtml 返回 null 表示请求失败 (已经内部重试过)
                 await Utils.sleep(1);
                 continue;
             }
-            // 检测 Cloudflare 挑战页: 标题为 "Just a moment..." 或 body 内容很少
             let title = $("title").text() || "";
             let html = $.html() || "";
             if (title.indexOf("Just a moment") > -1 || html.indexOf("cf_chl_opt") > -1 || html.length < 1000) {
-                await this.jadeLog.warning(`检测到 Cloudflare 挑战页 (第 ${i + 1}/${maxRetries} 次), 1 秒后重试: ${url}`);
+                await this.jadeLog.warning(`Cloudflare 挑战页 (第 ${i + 1}/${maxRetries} 次), 1 秒后重试: ${url}`);
                 await Utils.sleep(1);
                 continue;
             }
             return $;
         }
-        await this.jadeLog.error(`Cloudflare 挑战页重试 ${maxRetries} 次仍失败: ${url}`);
+        await this.jadeLog.error(`getHtml 重试 ${maxRetries} 次仍失败: ${url}`);
         return null;
+    }
+
+    // Node.js 原生 https GET 请求, 自动处理 gzip/deflate/br 解压
+    async _nodeHttpsGet(url, headers) {
+        return new Promise((resolve, reject) => {
+            let https, zlib;
+            try {
+                https = globalThis.require('https');
+                zlib = globalThis.require('zlib');
+            } catch (e) {
+                reject(new Error('require https/zlib failed: ' + e.message));
+                return;
+            }
+            const req = https.request(url, {
+                method: 'GET',
+                headers: headers || {}
+            }, (res) => {
+                const chunks = [];
+                res.on('data', c => chunks.push(c));
+                res.on('end', () => {
+                    try {
+                        let body = Buffer.concat(chunks);
+                        const encoding = res.headers['content-encoding'];
+                        if (encoding === 'gzip') body = zlib.gunzipSync(body);
+                        else if (encoding === 'deflate') body = zlib.inflateSync(body);
+                        else if (encoding === 'br') body = zlib.brotliDecompressSync(body);
+                        resolve(body.toString('utf8'));
+                    } catch (e) {
+                        reject(new Error('decompress failed: ' + e.message));
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.setTimeout(15000, () => {
+                req.destroy(new Error('timeout'));
+            });
+            req.end();
+        });
     }
 
     async setClasses() {

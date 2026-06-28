@@ -2,7 +2,7 @@
     "sites": [
         {
             "key": "_version",
-            "name": "🔧版本-v6",
+            "name": "🔧版本-v7",
             "api": "./js/_version.js",
             "timeout": 30,
             "ext": {
