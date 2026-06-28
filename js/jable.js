@@ -129,103 +129,44 @@ class JableTVSpider extends Spider {
         });
     }
 
+    // 硬编码分类 (不爬 fs1.app, 避免客户端超时)
+    static CATEGORIES = [
+        { type_id: "https://fs1.app/categories/bdsm/", type_name: "📚 主奴調教" },
+        { type_id: "https://fs1.app/categories/sex-only/", type_name: "🔞 直接開啪" },
+        { type_id: "https://fs1.app/categories/chinese-subtitle/", type_name: "📝 中文字幕" },
+        { type_id: "https://fs1.app/categories/insult/", type_name: "😤 凌辱快感" },
+        { type_id: "https://fs1.app/categories/uniform/", type_name: "👔 制服誘惑" },
+        { type_id: "https://fs1.app/categories/roleplay/", type_name: "🎭 角色劇情" },
+        { type_id: "https://fs1.app/categories/private-cam/", type_name: "📷 盜攝偷拍" },
+        { type_id: "https://fs1.app/categories/uncensored/", type_name: "🔓 無碼解放" },
+        { type_id: "https://fs1.app/categories/pov/", type_name: "👁 男友視角" },
+        { type_id: "https://fs1.app/categories/groupsex/", type_name: "👥 多P群交" },
+        { type_id: "https://fs1.app/categories/pantyhose/", type_name: "👠 絲襪美腿" },
+        { type_id: "https://fs1.app/categories/lesbian/", type_name: "👩女同歡愉" },
+        { type_id: "https://fs1.app/latest-updates/", type_name: "💡 新片優先" },
+        { type_id: "https://fs1.app/hot/", type_name: "🔥 熱度優先" },
+    ];
+
     async setClasses() {
-        let $ = await this.getHtml(this.siteUrl)
-        let navElements = $("[class=\"title-box\"]")
-        let defaultTypeIdElements = $("div.row")
-        for (const navElement of $(defaultTypeIdElements[0]).find("a")) {
-            let type_name = $(navElement).text()
-            let type_id = navElement.attribs.href
-            if (type_id.indexOf(this.siteUrl) > -1) {
-                this.classes.push(this.getTypeDic(type_name, type_id))
-            }
+        this.classes = [];
+        this.classes.push(this.getTypeDic("最近更新", "最近更新"));
+        for (const cat of JableTVSpider.CATEGORIES) {
+            this.classes.push(this.getTypeDic(cat.type_name, cat.type_id));
         }
-        navElements = navElements.slice(1, 9)
-        defaultTypeIdElements = defaultTypeIdElements.slice(1, 9)
-        for (let i = 0; i < navElements.length; i++) {
-            let typeId = $(defaultTypeIdElements[i]).find("a")[0].attribs["href"]
-            this.classes.push(this.getTypeDic("标签", typeId));
-            break
-        }
-    }
-
-    async getSortFilter($) {
-        let sortElements = $("[class=\"sorting-nav\"]").find("a")
-        let extend_dic = {"name": "排序", "key": "sort", "value": []}
-        for (const sortElement of sortElements) {
-            let typeId = sortElement.attribs["data-parameters"].split("sort_by:")[1]
-            let typeName = $(sortElement).text()
-            extend_dic["value"].push({"n": typeName, "v": typeId})
-        }
-        return extend_dic
-    }
-
-    async getFilter($, index, type_id, type_name) {
-        let extend_list = []
-        if (index < 4) {
-            let extend_dic = {"name": type_name, "key": "type", "value": []}
-            let type_seletc_list = ["div.img-box > a", "[class=\"horizontal-img-box ml-3 mb-3\"] > a", "", "sort"]
-            let type_id_select_list = ["div.absolute-center > h4", "div.detail"]
-            let default$ = await this.getHtml(type_id)
-            for (const element of default$(type_seletc_list[index])) {
-                let typeId = element.attribs["href"]
-                let typeName = $($(element).find(type_id_select_list[index])).text().replaceAll("\t", "").replaceAll("\n", '').replaceAll(" ", "");
-                extend_dic["value"].push({"n": typeName, "v": typeId})
-            }
-            if (extend_dic.value.length > 0) {
-                extend_list.push(extend_dic)
-                //排序
-                let sortDetail$ = await this.getHtml(extend_dic["value"][0]["v"])
-                let sort_extend_dic = await this.getSortFilter(sortDetail$)
-                if (sort_extend_dic.value.length > 0) {
-                    extend_list.push(sort_extend_dic)
-                }
-            } else {
-                //排序
-                let sort_extend_dic = await this.getSortFilter(default$)
-                if (sort_extend_dic.value.length > 0) {
-                    extend_list.push(sort_extend_dic)
-                }
-            }
-
-        } else {
-            let defaultTypeIdElements = $("div.row").slice(1, 9)
-            let navElements = $("[class=\"title-box\"]").slice(1, 9)
-            for (let i = 0; i < navElements.length; i++) {
-                let extend_dic = {"name": $($(navElements[i]).find("h2")).text(), "key": "type", "value": []}
-                for (const filterElement of $(defaultTypeIdElements[i]).find("a")) {
-                    let filter_type_id = filterElement.attribs.href
-                    if (filter_type_id.indexOf(this.siteUrl) > -1) {
-                        extend_dic["value"].push({"n": $(filterElement).text(), "v": filter_type_id})
-                    }
-                }
-                extend_list.push(extend_dic)
-            }
-
-            let sortDetail$ = await this.getHtml(type_id)
-            let sort_extend_dic = await this.getSortFilter(sortDetail$)
-            if (sort_extend_dic.value.length > 0) {
-                extend_list.push(sort_extend_dic)
-            }
-        }
-        return extend_list
     }
 
     async setFilterObj() {
-        let $ = await this.getHtml(this.siteUrl)
-        let classes = this.classes.slice(1)
-        for (let i = 0; i < classes.length; i++) {
-            let type_name = classes[i].type_name
-            let type_id = classes[i].type_id
-            // if (type_id.indexOf("models") > 1) {
-            //     type_id = `https://jable.tv/models/?mode=async&function=get_block&block_id=list_models_models_list&sort_by=total_videos&_=${new Date().getTime()}`
-            // }
-            let extend_list = await this.getFilter($, i, type_id, type_name)
-            if (extend_list.length > 1 && i < 4) {
-                type_id = extend_list[0]["value"][0]["v"]
-                this.classes[i + 1] = this.getTypeDic(type_name, type_id)
-            }
-            this.filterObj[type_id] = extend_list
+        this.filterObj = {};
+        for (const cat of JableTVSpider.CATEGORIES) {
+            this.filterObj[cat.type_id] = [{
+                name: "排序", key: "sort",
+                value: [
+                    { n: "近期最佳", v: "post_date_and_popularity" },
+                    { n: "最近更新", v: "post_date" },
+                    { n: "最多觀看", v: "video_viewed" },
+                    { n: "最高收藏", v: "most_favourited" },
+                ]
+            }];
         }
     }
 
