@@ -6,7 +6,7 @@
 */
 class VersionSpider {
     constructor() {
-        this.meta = { key: '_version', name: '🔧版本-v30', type: 3 };
+        this.meta = { key: '_version', name: '🔧版本-v31', type: 3 };
     }
 }
 

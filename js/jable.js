@@ -76,41 +76,59 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
+        // 收集诊断信息
+        let diag = [];
+        let plat = 'unknown';
+        try { plat = (typeof process !== 'undefined') ? process.platform + '/' + process.arch : 'no-process'; } catch(e) {}
+        diag.push('p=' + plat);
+        
         // 优先级 1: curl-impersonate (PC, Chrome TLS 指纹, 100% 绕过 CF)
         try {
             let html = await this._curlImpersonateGet(url, headers);
+            diag.push('curl:OK size=' + (html ? html.length : 0));
             if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
                 return load(html);
             }
+            diag.push('curl:挑战页或空');
         } catch (e) {
-            // curl-impersonate 不可用 (iOS 或二进制下载失败), 降级
+            diag.push('curl:ERR:' + e.message.slice(0, 50));
         }
         
         // 优先级 2: https.request (fs1.app, CF 只检查 UA)
         if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
+            diag.push('https=Y');
             const maxRetries = 2;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._httpsGet(url, headers);
+                    diag.push('https:try' + (i+1) + ' size=' + (html ? html.length : 0));
                     if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
                         return load(html);
                     }
                     await Utils.sleep(1);
                 } catch (e) {
+                    diag.push('https:try' + (i+1) + ' ERR:' + e.message.slice(0, 50));
                     await Utils.sleep(1);
                 }
             }
+        } else {
+            diag.push('https=N');
         }
         
         // 优先级 3: cat.js req
         for (let i = 0; i < 2; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
+                diag.push('super:try' + (i+1) + ' null');
                 await Utils.sleep(1);
                 continue;
             }
             return $;
         }
+        diag.push('全失败');
+        
+        // 存诊断信息供 setHomeVod 使用
+        this._lastDiag = diag.join(',');
         return null;
     }
 
@@ -297,9 +315,9 @@ class JableTVSpider extends Spider {
         if ($ === null || $ === undefined) {
             this.homeVodList = [{
                 vod_id: "diag",
-                vod_name: "❌getHtml失败 站点:" + this.siteUrl,
+                vod_name: "❌getHtml失败",
                 vod_pic: "",
-                vod_remarks: "cat.js req 可能无法访问 fs1.app"
+                vod_remarks: this._lastDiag || "no-diag"
             }]
             return
         }
