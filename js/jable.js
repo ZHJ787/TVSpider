@@ -66,10 +66,9 @@ class JableTVSpider extends Spider {
         // 必须带 Accept 和 Accept-Encoding, 否则有些请求会返回空响应
         let header = {
             "User-Agent": "PostmanRuntime/7.36.3",
-            "Host": "fs1.app",
-            "Postman-Token": "33290483-3c8d-413f-a160-0d3aea9e6f95",
+                        "Postman-Token": "33290483-3c8d-413f-a160-0d3aea9e6f95",
             "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "identity",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Cache-Control": "no-cache"
         };
@@ -146,7 +145,7 @@ class JableTVSpider extends Spider {
         const args = [
             '-s', '-o', '-',
             '-w', '\n__HTTP_CODE__:%{http_code}',
-            '--max-time', '15'
+            '--compressed', '--max-time', '15'
         ];
         const reqHeaders = headers || {};
         const keys = Object.keys(reqHeaders);
