@@ -1,7 +1,7 @@
 /*
 * @File     : jable.js
 * @Author   : jade / ZHJ787
-* @Desc     : 用 got-scraping 绕过 Cloudflare (模拟浏览器 TLS 指纹)
+* @Desc     : 用 curl-impersonate 绕过 Cloudflare (PC) + https.request 降级 (iOS)
 */
 import {_, load} from '../lib/cat.js';
 import {VodDetail, VodShort} from "../lib/vod.js"
@@ -9,6 +9,10 @@ import * as Utils from "../lib/utils.js";
 import {Spider} from "./spider.js";
 import https from "https";
 import zlib from "zlib";
+import { spawnSync } from "child_process";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 
 class JableTVSpider extends Spider {
@@ -73,9 +77,19 @@ class JableTVSpider extends Spider {
     }
 
     async getHtml(url = this.siteUrl, proxy = false, headers = this.getHeader()) {
-        // 用静态 import 的 https 模块访问 fs1.app (Cloudflare 只检查 UA)
+        // 优先级 1: curl-impersonate (PC, Chrome TLS 指纹, 100% 绕过 CF)
+        try {
+            let html = await this._curlImpersonateGet(url, headers);
+            if (html && html.length > 1000 && html.indexOf("Just a moment") < 0) {
+                return load(html);
+            }
+        } catch (e) {
+            // curl-impersonate 不可用 (iOS 或二进制下载失败), 降级
+        }
+        
+        // 优先级 2: https.request (fs1.app, CF 只检查 UA)
         if (typeof https !== 'undefined' && https && typeof https.request === 'function') {
-            const maxRetries = 3;
+            const maxRetries = 2;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     let html = await this._httpsGet(url, headers);
@@ -88,9 +102,9 @@ class JableTVSpider extends Spider {
                 }
             }
         }
-        // 降级: cat.js req
-        const maxRetries = 3;
-        for (let i = 0; i < maxRetries; i++) {
+        
+        // 优先级 3: cat.js req
+        for (let i = 0; i < 2; i++) {
             let $ = await super.getHtml(url, true, headers);
             if ($ === null || $ === undefined) {
                 await Utils.sleep(1);
@@ -99,6 +113,62 @@ class JableTVSpider extends Spider {
             return $;
         }
         return null;
+    }
+
+    // curl-impersonate 二进制调用 (和 Python curl_cffi 底层一样)
+    // 首次使用时从 GitHub Release 下载二进制, 后续直接调用
+    async _curlImpersonateGet(url, headers) {
+        const tmpDir = os.tmpdir();
+        const binPath = path.join(tmpDir, 'curl-impersonate-chrome');
+        
+        // 下载二进制 (如果不存在)
+        if (!fs.existsSync(binPath)) {
+            const downloadUrl = 'https://github.com/ZHJ787/TVSpider/releases/download/v1/curl-impersonate-chrome-linux-x86';
+            await new Promise((resolve, reject) => {
+                const file = fs.createWriteStream(binPath);
+                https.get(downloadUrl, (res) => {
+                    if (res.statusCode === 302 || res.statusCode === 301) {
+                        https.get(res.headers.location, (res2) => {
+                            res2.pipe(file);
+                            file.on('finish', () => { file.close(); fs.chmodSync(binPath, 0o755); resolve(); });
+                        }).on('error', reject);
+                    } else if (res.statusCode === 200) {
+                        res.pipe(file);
+                        file.on('finish', () => { file.close(); fs.chmodSync(binPath, 0o755); resolve(); });
+                    } else {
+                        reject(new Error('download failed: ' + res.statusCode));
+                    }
+                }).on('error', reject);
+            });
+        }
+        
+        // 调用 curl-impersonate (Chrome TLS 指纹 + PostmanRuntime UA)
+        const args = [
+            '-s', '-o', '-',
+            '-w', '\n__HTTP_CODE__:%{http_code}',
+            '--ciphers', 'TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,ECDHE-ECDSA-AES128-GCM-SHA256,ECDHE-RSA-AES128-GCM-SHA256,ECDHE-ECDSA-AES256-GCM-SHA384,ECDHE-RSA-AES256-GCM-SHA384,ECDHE-ECDSA-CHACHA20-POLY1305,ECDHE-RSA-CHACHA20-POLY1305',
+            '--http2', '--compressed', '--tlsv1.2', '--alps', '--tls-permute-extensions',
+            '--max-time', '15'
+        ];
+        const reqHeaders = headers || {};
+        const keys = Object.keys(reqHeaders);
+        for (let i = 0; i < keys.length; i++) {
+            args.push('-H', keys[i] + ': ' + reqHeaders[keys[i]]);
+        }
+        args.push(url);
+        
+        const r = spawnSync(binPath, args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+        if (r.error) {
+            throw new Error('spawn failed: ' + r.error.message);
+        }
+        const out = r.stdout || '';
+        const idx = out.lastIndexOf('__HTTP_CODE__:');
+        const code = idx > -1 ? out.slice(idx + 14).trim() : 'N/A';
+        const body = idx > -1 ? out.slice(0, idx) : out;
+        if (code !== '200') {
+            throw new Error('HTTP ' + code);
+        }
+        return body;
     }
 
     async _httpsGet(url, headers) {
