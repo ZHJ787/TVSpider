@@ -324,14 +324,14 @@ class JableTVSpider extends Spider {
     }
 
     async setCategory(tid, pg, filter, extend) {
-        let extend_type = extend["type"] ?? tid
+        let extend_type = (extend["type"] ?? tid).replace(/\/$/, "")
         let sort_by = extend["sort"] ?? "video_viewed"
         this.limit = 24
         let cateUrl;
         this.total = 0
         this.count = 0
         if (tid.indexOf("latest-updates") > 1) {
-            cateUrl = `https://jable.tv/latest-updates/?mode=async&function=get_block&block_id=list_videos_latest_videos_list&sort_by=post_date&from=${pg}&_=1709730132217`
+            cateUrl = `https://fs1.app/latest-updates/?mode=async&function=get_block&block_id=list_videos_latest_videos_list&sort_by=post_date&from=${pg}&_=1709730132217`
         } else {
             cateUrl = extend_type + `/${pg}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=${sort_by}&_=${new Date().getTime()}`
         }
