@@ -96,26 +96,15 @@ class NodeJSSpider extends Spider {
         this.vodList = []
         await this.jadeLog.info("正在解析首页", true)
         // 直接调 setClasses + setFilterObj (硬编码, 瞬间完成)
-        // 不依赖 init, 不爬 jable.tv/fs1.app
         try {
             await this.setClasses()
             await this.setFilterObj()
         } catch (e) {
             await this.jadeLog.error(`setClasses/setFilterObj 失败:${e}`)
         }
-        // setHomeVod 限时 8 秒, 超时返回空 list (不影响分类显示)
-        try {
-            await Promise.race([
-                this.setHomeVod(),
-                new Promise((resolve) => setTimeout(() => {
-                    this.homeVodList = [];
-                    resolve();
-                }, 8000))
-            ]);
-        } catch (e) {
-            await this.jadeLog.error(`首页推荐视频获取失败:${e}`)
-            this.homeVodList = []
-        }
+        // home 接口不调 setHomeVod, 直接返回空 list
+        // 客户端点分类后调 category, category 有足够时间等 getHtml
+        this.homeVodList = []
         await this.jadeLog.info("首页解析完成", true)
         return this.result.home(this.classes, this.homeVodList, this.filterObj)
     }
